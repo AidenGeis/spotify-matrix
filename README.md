@@ -36,7 +36,7 @@ http://127.0.0.1:8888/callback
 For a headless Pi, forward the callback port from your computer:
 
 ```bash
-ssh -L 8888:127.0.0.1:8888 pi@raspberrypi.local
+ssh -L 8888:127.0.0.1:8888 aidengeis1@pi.local
 ```
 
 Then run the script on the Pi and open the printed authorization URL in your local browser.
