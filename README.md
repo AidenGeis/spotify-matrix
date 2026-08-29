@@ -46,7 +46,7 @@ Then run the script on the Pi and open the printed authorization URL in your loc
 This is the working command to run the script on your raspberry pi:
 
 ```bash
-sudo -E .venv/bin/python spotify_matrix.py \
+sudo -E env/bin/python spotify_matrix.py \
   --rows 64 \
   --cols 64 \
   --chain-length 1 \
