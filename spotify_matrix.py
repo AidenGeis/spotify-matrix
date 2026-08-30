@@ -391,30 +391,62 @@ def download_image(url: str) -> Image.Image:
     response.raise_for_status()
     return Image.open(BytesIO(response.content)).convert("RGB")
 
+def prepare_album_art(art: Image.Image, size: int) -> Image.Image:
+    margin = max(2, size // 32)
+    disc_size = size - margin * 2
 
-def render_record(art: Image.Image | None, angle: float, size: int) -> Image.Image:
+    return ImageOps.fit(
+        art,
+        (disc_size, disc_size),
+        method=Image.Resampling.LANCZOS,
+    )
+
+def render_record(art_square: Image.Image | None, angle: float, size: int) -> Image.Image:
     frame = Image.new("RGBA", (size, size), (0, 0, 0, 255))
-    if art is None:
+
+    if art_square is None:
         return frame.convert("RGB")
 
     margin = max(2, size // 32)
     disc_size = size - margin * 2
-    # The album art is the record surface: rotate it first, then cut it into a circular disk.
-    art_square = ImageOps.fit(art, (disc_size, disc_size), method=Image.Resampling.LANCZOS)
-    rotated = art_square.rotate(angle, resample=Image.Resampling.BICUBIC)
+
+    rotated = art_square.rotate(
+        angle,
+        resample=Image.Resampling.BICUBIC
+    )
 
     disc_mask = Image.new("L", (disc_size, disc_size), 0)
     mask_draw = ImageDraw.Draw(disc_mask)
-    mask_draw.ellipse((0, 0, disc_size - 1, disc_size - 1), fill=255)
-    frame.paste(rotated.convert("RGBA"), (margin, margin), disc_mask)
+    mask_draw.ellipse(
+        (0, 0, disc_size - 1, disc_size - 1),
+        fill=255
+    )
+
+    frame.paste(
+        rotated.convert("RGBA"),
+        (margin, margin),
+        disc_mask
+    )
 
     draw = ImageDraw.Draw(frame, "RGBA")
-    outer = (margin, margin, size - margin - 1, size - margin - 1)
-    draw.ellipse(outer, outline=(6, 6, 6, 255), width=max(1, size // 32))
+
+    outer = (
+        margin,
+        margin,
+        size - margin - 1,
+        size - margin - 1,
+    )
+
+    draw.ellipse(
+        outer,
+        outline=(6, 6, 6, 255),
+        width=max(1, size // 32),
+    )
 
     center = size // 2
     label_radius = max(5, size // 11)
     hole_radius = max(2, size // 25)
+
     draw.ellipse(
         (
             center - label_radius,
@@ -425,6 +457,7 @@ def render_record(art: Image.Image | None, angle: float, size: int) -> Image.Ima
         fill=(16, 16, 16, 210),
         outline=(220, 220, 220, 90),
     )
+
     draw.ellipse(
         (
             center - hole_radius,
@@ -434,6 +467,7 @@ def render_record(art: Image.Image | None, angle: float, size: int) -> Image.Ima
         ),
         fill=(0, 0, 0, 255),
     )
+
     return frame.convert("RGB")
 
 
@@ -587,30 +621,120 @@ def run(args: argparse.Namespace) -> None:
     angle = 0.0
     last_frame = time.monotonic()
 
+    fps_frame_count = 0
+    fps_start_time = time.monotonic()
+
+    total_lock_time = 0.0
+    total_render_time = 0.0
+    total_display_time = 0.0
+
+    last_art_image = None
+    prepared_art = None
+
     try:
         while True:
             frame_start = time.monotonic()
+
+            # Measure time waiting on / using playback_lock
+            lock_start = time.monotonic()
+
             with playback_lock:
                 current_art_image = playback_state.image
                 is_playing = playback_state.is_playing
+
+            if current_art_image is not last_art_image:
+                if current_art_image is not None:
+                    prepared_art = prepare_album_art(current_art_image, size)
+                else:
+                    prepared_art = None
+
+                last_art_image = current_art_image
+
+
+
+            lock_time = time.monotonic() - lock_start
+            total_lock_time += lock_time
 
             now = time.monotonic()
             delta = now - last_frame
             last_frame = now
 
             if is_playing and current_art_image is not None:
-                angle = (angle - 360.0 * (args.rpm / 60.0) * delta) % 360.0
+                angle = (
+                                angle
+                                - 360.0 * (args.rpm / 60.0) * delta
+                        ) % 360.0
 
-            image = render_record(current_art_image, angle, size) if current_art_image else idle
+            # Measure image rendering
+            render_start = time.monotonic()
+
+            image = render_record(prepared_art, angle, size) if prepared_art else idle
+
+            render_time = time.monotonic() - render_start
+            total_render_time += render_time
+
+            # Measure matrix display
+            display_start = time.monotonic()
+
             display.show(image)
+
+            display_time = time.monotonic() - display_start
+            total_display_time += display_time
 
             if args.once:
                 break
 
-            sleep_for = max(0.0, (1.0 / args.fps) - (time.monotonic() - frame_start))
+            # Measure actual FPS
+            fps_frame_count += 1
+            elapsed = time.monotonic() - fps_start_time
+
+            if elapsed >= 1.0:
+                actual_fps = fps_frame_count / elapsed
+
+                avg_lock_ms = (
+                                      total_lock_time / fps_frame_count
+                              ) * 1000
+
+                avg_render_ms = (
+                                        total_render_time / fps_frame_count
+                                ) * 1000
+
+                avg_display_ms = (
+                                         total_display_time / fps_frame_count
+                                 ) * 1000
+
+                total_measured_ms = (
+                        avg_lock_ms
+                        + avg_render_ms
+                        + avg_display_ms
+                )
+
+                print(
+                    f"FPS: {actual_fps:.1f} | "
+                    f"Lock: {avg_lock_ms:.1f} ms | "
+                    f"Render: {avg_render_ms:.1f} ms | "
+                    f"Display: {avg_display_ms:.1f} ms | "
+                    f"Measured: {total_measured_ms:.1f} ms"
+                )
+
+                fps_frame_count = 0
+                fps_start_time = time.monotonic()
+
+                total_lock_time = 0.0
+                total_render_time = 0.0
+                total_display_time = 0.0
+
+            sleep_for = max(
+                0.0,
+                (1.0 / args.fps)
+                - (time.monotonic() - frame_start)
+            )
+
             time.sleep(sleep_for)
+
     except KeyboardInterrupt:
         pass
+
     finally:
         stop_event.set()
         poll_thread.join(timeout=1)
