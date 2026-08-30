@@ -401,8 +401,34 @@ def prepare_album_art(art: Image.Image, size: int) -> Image.Image:
         method=Image.Resampling.LANCZOS,
     )
 
-def render_record(art_square: Image.Image | None, angle: float, size: int) -> Image.Image:
-    frame = Image.new("RGBA", (size, size), (0, 0, 0, 255))
+def prepare_album_art(art: Image.Image, size: int) -> Image.Image:
+    """
+    Resize the album art once when the song/album changes.
+    """
+    margin = max(2, size // 32)
+    disc_size = size - margin * 2
+
+    return ImageOps.fit(
+        art,
+        (disc_size, disc_size),
+        method=Image.Resampling.LANCZOS,
+    )
+
+
+def render_record(
+    art_square: Image.Image | None,
+    angle: float,
+    size: int
+) -> Image.Image:
+    """
+    Render one already-resized album-art frame at a given angle.
+    """
+
+    frame = Image.new(
+        "RGBA",
+        (size, size),
+        (0, 0, 0, 255)
+    )
 
     if art_square is None:
         return frame.convert("RGB")
@@ -410,43 +436,55 @@ def render_record(art_square: Image.Image | None, angle: float, size: int) -> Im
     margin = max(2, size // 32)
     disc_size = size - margin * 2
 
+    # Rotate the small, already-resized album art
     rotated = art_square.rotate(
         angle,
         resample=Image.Resampling.BICUBIC
     )
 
-    disc_mask = Image.new("L", (disc_size, disc_size), 0)
+    # Circular mask
+    disc_mask = Image.new(
+        "L",
+        (disc_size, disc_size),
+        0
+    )
+
     mask_draw = ImageDraw.Draw(disc_mask)
+
     mask_draw.ellipse(
         (0, 0, disc_size - 1, disc_size - 1),
         fill=255
     )
 
+    # Paste circular album art onto frame
     frame.paste(
         rotated.convert("RGBA"),
         (margin, margin),
         disc_mask
     )
 
+    # Draw record details
     draw = ImageDraw.Draw(frame, "RGBA")
 
     outer = (
         margin,
         margin,
         size - margin - 1,
-        size - margin - 1,
+        size - margin - 1
     )
 
     draw.ellipse(
         outer,
         outline=(6, 6, 6, 255),
-        width=max(1, size // 32),
+        width=max(1, size // 32)
     )
 
     center = size // 2
+
     label_radius = max(5, size // 11)
     hole_radius = max(2, size // 25)
 
+    # Center label
     draw.ellipse(
         (
             center - label_radius,
@@ -458,6 +496,7 @@ def render_record(art_square: Image.Image | None, angle: float, size: int) -> Im
         outline=(220, 220, 220, 90),
     )
 
+    # Center hole
     draw.ellipse(
         (
             center - hole_radius,
@@ -469,6 +508,36 @@ def render_record(art_square: Image.Image | None, angle: float, size: int) -> Im
     )
 
     return frame.convert("RGB")
+
+
+def prepare_rotation_frames(
+    art: Image.Image,
+    size: int,
+    num_frames: int = 60
+) -> list[Image.Image]:
+    """
+    Generate all rotated record images once.
+
+    The main animation loop can then simply select a frame
+    instead of performing Pillow rotations every frame.
+    """
+
+    prepared_art = prepare_album_art(art, size)
+
+    frames = []
+
+    for i in range(num_frames):
+        angle = 360.0 * i / num_frames
+
+        frame = render_record(
+            prepared_art,
+            angle,
+            size
+        )
+
+        frames.append(frame)
+
+    return frames
 
 
 def render_idle(size: int) -> Image.Image:
@@ -621,6 +690,22 @@ def run(args: argparse.Namespace) -> None:
     angle = 0.0
     last_frame = time.monotonic()
 
+    # ---------------------------------------------------------
+    # Pre-rendered rotation frame cache
+    # ---------------------------------------------------------
+
+    last_art_image = None
+    rotation_frames = None
+
+    # Number of discrete angles in one full rotation.
+    # 60 is a good starting point for a 64x64 display.
+    NUM_ROTATION_FRAMES = 60
+
+
+    # ---------------------------------------------------------
+    # Performance counters
+    # ---------------------------------------------------------
+
     fps_frame_count = 0
     fps_start_time = time.monotonic()
 
@@ -628,85 +713,171 @@ def run(args: argparse.Namespace) -> None:
     total_render_time = 0.0
     total_display_time = 0.0
 
-    last_art_image = None
-    prepared_art = None
 
     try:
         while True:
             frame_start = time.monotonic()
 
-            # Measure time waiting on / using playback_lock
+
+            # =================================================
+            # Get Spotify playback state
+            # =================================================
+
             lock_start = time.monotonic()
 
             with playback_lock:
                 current_art_image = playback_state.image
                 is_playing = playback_state.is_playing
 
+            lock_time = time.monotonic() - lock_start
+            total_lock_time += lock_time
+
+
+            # =================================================
+            # Check whether album artwork changed
+            # =================================================
+
             if current_art_image is not last_art_image:
+
                 if current_art_image is not None:
-                    prepared_art = prepare_album_art(current_art_image, size)
+                    print(
+                        f"Preparing {NUM_ROTATION_FRAMES} "
+                        f"rotation frames..."
+                    )
+
+                    prepare_start = time.monotonic()
+
+                    rotation_frames = prepare_rotation_frames(
+                        current_art_image,
+                        size,
+                        NUM_ROTATION_FRAMES
+                    )
+
+                    prepare_elapsed = (
+                        time.monotonic()
+                        - prepare_start
+                    )
+
+                    print(
+                        f"Rotation frames ready in "
+                        f"{prepare_elapsed:.2f} seconds"
+                    )
+
                 else:
-                    prepared_art = None
+                    rotation_frames = None
 
                 last_art_image = current_art_image
 
 
-
-            lock_time = time.monotonic() - lock_start
-            total_lock_time += lock_time
+            # =================================================
+            # Calculate rotation angle
+            # =================================================
 
             now = time.monotonic()
+
             delta = now - last_frame
+
             last_frame = now
 
-            if is_playing and current_art_image is not None:
+            if (
+                is_playing
+                and rotation_frames is not None
+            ):
                 angle = (
-                                angle
-                                - 360.0 * (args.rpm / 60.0) * delta
-                        ) % 360.0
+                    angle
+                    - 360.0
+                    * (args.rpm / 60.0)
+                    * delta
+                ) % 360.0
 
-            # Measure image rendering
+
+            # =================================================
+            # Select already-rendered frame
+            # =================================================
+
             render_start = time.monotonic()
 
-            image = render_record(prepared_art, angle, size) if prepared_art else idle
+            if rotation_frames is not None:
 
-            render_time = time.monotonic() - render_start
+                frame_index = int(
+                    (angle / 360.0)
+                    * len(rotation_frames)
+                ) % len(rotation_frames)
+
+                image = rotation_frames[frame_index]
+
+            else:
+                image = idle
+
+            render_time = (
+                time.monotonic()
+                - render_start
+            )
+
             total_render_time += render_time
 
-            # Measure matrix display
+
+            # =================================================
+            # Send frame to LED matrix
+            # =================================================
+
             display_start = time.monotonic()
 
             display.show(image)
 
-            display_time = time.monotonic() - display_start
+            display_time = (
+                time.monotonic()
+                - display_start
+            )
+
             total_display_time += display_time
+
+
+            # =================================================
+            # --once support
+            # =================================================
 
             if args.once:
                 break
 
-            # Measure actual FPS
+
+            # =================================================
+            # FPS / performance output
+            # =================================================
+
             fps_frame_count += 1
-            elapsed = time.monotonic() - fps_start_time
+
+            elapsed = (
+                time.monotonic()
+                - fps_start_time
+            )
 
             if elapsed >= 1.0:
-                actual_fps = fps_frame_count / elapsed
+
+                actual_fps = (
+                    fps_frame_count
+                    / elapsed
+                )
 
                 avg_lock_ms = (
-                                      total_lock_time / fps_frame_count
-                              ) * 1000
+                    total_lock_time
+                    / fps_frame_count
+                ) * 1000
 
                 avg_render_ms = (
-                                        total_render_time / fps_frame_count
-                                ) * 1000
+                    total_render_time
+                    / fps_frame_count
+                ) * 1000
 
                 avg_display_ms = (
-                                         total_display_time / fps_frame_count
-                                 ) * 1000
+                    total_display_time
+                    / fps_frame_count
+                ) * 1000
 
                 total_measured_ms = (
-                        avg_lock_ms
-                        + avg_render_ms
-                        + avg_display_ms
+                    avg_lock_ms
+                    + avg_render_ms
+                    + avg_display_ms
                 )
 
                 print(
@@ -717,23 +888,39 @@ def run(args: argparse.Namespace) -> None:
                     f"Measured: {total_measured_ms:.1f} ms"
                 )
 
+
+                # Reset measurements
+
                 fps_frame_count = 0
-                fps_start_time = time.monotonic()
+
+                fps_start_time = (
+                    time.monotonic()
+                )
 
                 total_lock_time = 0.0
                 total_render_time = 0.0
                 total_display_time = 0.0
 
+
+            # =================================================
+            # Maintain requested FPS
+            # =================================================
+
             sleep_for = max(
                 0.0,
                 (1.0 / args.fps)
-                - (time.monotonic() - frame_start)
+                - (
+                    time.monotonic()
+                    - frame_start
+                )
             )
 
             time.sleep(sleep_for)
 
+
     except KeyboardInterrupt:
         pass
+
 
     finally:
         stop_event.set()
