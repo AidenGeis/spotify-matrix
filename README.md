@@ -51,16 +51,18 @@ sudo -E env/bin/python spotify_matrix.py \
   --cols 64 \
   --chain-length 1 \
   --parallel 1 \
-  --gpio-slowdown 4 \
+  --gpio-slowdown 1 \
   --no-hardware-pulse \
-  --hardware-mapping adafruit-hat
+  --hardware-mapping adafruit-hat \
+  --brightness 65 \
+  --rpm 10
 ```
 
 Useful hardware options:
 
 ```bash
 sudo -E .venv/bin/python spotify_matrix.py \
-  --hardware-mapping regular \
+  --hardware-mapping adafruit-hat \
   --gpio-slowdown 2 \
   --brightness 65
 ```
