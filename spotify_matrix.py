@@ -415,6 +415,56 @@ def prepare_album_art(art: Image.Image, size: int) -> Image.Image:
         method=Image.Resampling.LANCZOS,
     )
 
+def add_pause_overlay(image: Image.Image) -> Image.Image:
+    paused = image.copy().convert("RGBA")
+
+    overlay = Image.new("RGBA", paused.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    size = paused.width
+    center = size // 2
+
+    # Dark translucent circle behind pause symbol
+    radius = size // 5
+    draw.ellipse(
+        (
+            center - radius,
+            center - radius,
+            center + radius,
+            center + radius,
+        ),
+        fill=(0, 0, 0, 170),
+    )
+
+    # Pause bars
+    bar_width = max(3, size // 14)
+    bar_height = size // 4
+    gap = size // 18
+
+    top = center - bar_height // 2
+    bottom = center + bar_height // 2
+
+    draw.rectangle(
+        (
+            center - gap - bar_width,
+            top,
+            center - gap,
+            bottom,
+        ),
+        fill=(255, 255, 255, 255),
+    )
+
+    draw.rectangle(
+        (
+            center + gap,
+            top,
+            center + gap + bar_width,
+            bottom,
+        ),
+        fill=(255, 255, 255, 255),
+    )
+
+    return Image.alpha_composite(paused, overlay).convert("RGB")
 
 def render_record(
     art_square: Image.Image | None,
@@ -697,6 +747,7 @@ def run(args: argparse.Namespace) -> None:
 
     last_art_image = None
     rotation_frames = None
+    paused_frames = None
 
     # Number of discrete angles in one full rotation.
     # 60 is a good starting point for a 64x64 display.
@@ -738,6 +789,10 @@ def run(args: argparse.Namespace) -> None:
             # Check whether album artwork changed
             # =================================================
 
+            # =================================================
+            # Check whether album artwork changed
+            # =================================================
+
             if current_art_image is not last_art_image:
 
                 if current_art_image is not None:
@@ -754,9 +809,15 @@ def run(args: argparse.Namespace) -> None:
                         NUM_ROTATION_FRAMES
                     )
 
+                    # Create paused versions of every frame
+                    paused_frames = [
+                        add_pause_overlay(frame)
+                        for frame in rotation_frames
+                    ]
+
                     prepare_elapsed = (
-                        time.monotonic()
-                        - prepare_start
+                            time.monotonic()
+                            - prepare_start
                     )
 
                     print(
@@ -766,6 +827,7 @@ def run(args: argparse.Namespace) -> None:
 
                 else:
                     rotation_frames = None
+                    paused_frames = None
 
                 last_art_image = current_art_image
 
@@ -805,7 +867,10 @@ def run(args: argparse.Namespace) -> None:
                     * len(rotation_frames)
                 ) % len(rotation_frames)
 
-                image = rotation_frames[frame_index]
+                if is_playing:
+                    image = rotation_frames[frame_index]
+                else:
+                    image = paused_frames[frame_index]
 
             else:
                 image = idle
