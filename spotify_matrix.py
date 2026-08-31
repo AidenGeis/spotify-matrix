@@ -323,6 +323,8 @@ class MatrixDisplay:
         options.limit_refresh_rate_hz = args.limit_refresh_rate_hz
         options.disable_hardware_pulsing = args.no_hardware_pulse
 
+        options.drop_privileges = False
+
         self.matrix = RGBMatrix(options=options)
         self.canvas = self.matrix.CreateFrameCanvas()
 
@@ -332,7 +334,6 @@ class MatrixDisplay:
 
     def clear(self) -> None:
         self.matrix.Clear()
-
 
 class MockDisplay:
     def __init__(self, output: Path) -> None:
@@ -868,6 +869,7 @@ def run(args: argparse.Namespace) -> None:
                     total_render_time
                     / fps_frame_count
                 ) * 1000
+
 
                 avg_display_ms = (
                     total_display_time
