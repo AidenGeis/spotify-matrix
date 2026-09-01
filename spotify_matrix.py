@@ -747,7 +747,9 @@ def run(args: argparse.Namespace) -> None:
 
     last_art_image = None
     rotation_frames = None
-    paused_frames = None
+
+    paused_image = None
+    was_playing = True
 
     # Number of discrete angles in one full rotation.
     # 60 is a good starting point for a 64x64 display.
@@ -784,11 +786,6 @@ def run(args: argparse.Namespace) -> None:
             lock_time = time.monotonic() - lock_start
             total_lock_time += lock_time
 
-
-            # =================================================
-            # Check whether album artwork changed
-            # =================================================
-
             # =================================================
             # Check whether album artwork changed
             # =================================================
@@ -809,12 +806,6 @@ def run(args: argparse.Namespace) -> None:
                         NUM_ROTATION_FRAMES
                     )
 
-                    # Create paused versions of every frame
-                    paused_frames = [
-                        add_pause_overlay(frame)
-                        for frame in rotation_frames
-                    ]
-
                     prepare_elapsed = (
                             time.monotonic()
                             - prepare_start
@@ -827,7 +818,6 @@ def run(args: argparse.Namespace) -> None:
 
                 else:
                     rotation_frames = None
-                    paused_frames = None
 
                 last_art_image = current_art_image
 
@@ -858,6 +848,10 @@ def run(args: argparse.Namespace) -> None:
             # Select already-rendered frame
             # =================================================
 
+            # =================================================
+            # Select already-rendered frame
+            # =================================================
+
             render_start = time.monotonic()
 
             if rotation_frames is not None:
@@ -869,18 +863,20 @@ def run(args: argparse.Namespace) -> None:
 
                 if is_playing:
                     image = rotation_frames[frame_index]
+                    paused_image = None
+
                 else:
-                    image = paused_frames[frame_index]
+                    # Only create the pause image once
+                    if paused_image is None:
+                        paused_image = add_pause_overlay(
+                            rotation_frames[frame_index]
+                        )
+
+                    image = paused_image
 
             else:
                 image = idle
-
-            render_time = (
-                time.monotonic()
-                - render_start
-            )
-
-            total_render_time += render_time
+                paused_image = None
 
 
             # =================================================
