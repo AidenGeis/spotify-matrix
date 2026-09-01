@@ -508,6 +508,10 @@ def render_record(
     # Draw record details
     draw = ImageDraw.Draw(frame, "RGBA")
 
+    # =================================================
+    # Outer rings
+    # =================================================
+
     outer = (
         margin,
         margin,
@@ -515,37 +519,35 @@ def render_record(
         size - margin - 1
     )
 
-    # Black outline behind pink ring
-    draw.ellipse(
-        outer,
-        outline=(255,255,255, 255),
-        width=3
+    # White circle 1 pixel farther outward
+    white_outer = (
+        outer[0] - 1,
+        outer[1] - 1,
+        outer[2] + 1,
+        outer[3] + 1
     )
 
-    # Pink ring on top
+    draw.ellipse(
+        white_outer,
+        outline=(255, 255, 255, 255),
+        width=1
+    )
+
+    # Thin pink ring
     draw.ellipse(
         outer,
         outline=(255, 105, 180, 255),
-        width=2
+        width=1
     )
+
+    # =================================================
+    # Center circle
+    # =================================================
 
     center = size // 2
 
     label_radius = max(5, size // 11)
     hole_radius = max(2, size // 25)
-
-    # Black outline around pink center
-    outline_radius = label_radius + 1
-
-    draw.ellipse(
-        (
-            center - outline_radius,
-            center - outline_radius,
-            center + outline_radius,
-            center + outline_radius,
-        ),
-        fill=(255,255,255, 255)
-    )
 
     # Pink center
     draw.ellipse(
@@ -556,6 +558,20 @@ def render_record(
             center + label_radius,
         ),
         fill=(255, 105, 180, 255)
+    )
+
+    # White ring moved inward
+    white_radius = label_radius - 2
+
+    draw.ellipse(
+        (
+            center - white_radius,
+            center - white_radius,
+            center + white_radius,
+            center + white_radius,
+        ),
+        outline=(255, 255, 255, 255),
+        width=1
     )
 
     # Center hole
@@ -1824,12 +1840,11 @@ def run(args: argparse.Namespace) -> None:
             # =================================================
 
             fade_transitions = {
+                # Clock -> CD
                 (IDLE, PLAYING),
                 (IDLE, PAUSED),
 
-                (PLAYING, SHATTERING),
-                (PAUSED, SHATTERING),
-
+                # Shattered CD -> Clock
                 (SHATTER_HOLD, IDLE),
             }
 
@@ -2059,7 +2074,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-seconds", type=positive_float, default=.5)
     parser.add_argument("--fps", type=positive_float, default=20.0)
     parser.add_argument("--rpm", type=positive_float, default=10.0)
-    parser.add_argument("--fade-duration",type=positive_float,default=0.30,help="Total fade-out/fade-in transition time in seconds.")
+    parser.add_argument("--fade-duration",type=positive_float,default=0.5,help="Total fade-out/fade-in transition time in seconds.")
     parser.add_argument("--shatter-duration",type=positive_float,default=0.7,help="Length of the CD shatter animation in seconds.")
     parser.add_argument("--shatter-hold",type=positive_float,default=5.0,help="How long the shattered CD remains on screen in seconds.")
     parser.add_argument("--token-cache", type=Path, default=Path(".cache/spotify_token.json"))
