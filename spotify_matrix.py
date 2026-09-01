@@ -518,7 +518,7 @@ def render_record(
     # Black outline behind pink ring
     draw.ellipse(
         outer,
-        outline=(0, 0, 0, 255),
+        outline=(255,255,255, 255),
         width=3
     )
 
@@ -544,7 +544,7 @@ def render_record(
             center + outline_radius,
             center + outline_radius,
         ),
-        fill=(0, 0, 0, 255)
+        fill=(255,255,255, 255)
     )
 
     # Pink center
@@ -968,6 +968,31 @@ def draw_heart(
         fill=pink
     )
 
+def blend_with_black(
+    image: Image.Image,
+    amount: float
+) -> Image.Image:
+    """
+    Darken an image.
+
+    amount = 0.0 -> normal image
+    amount = 1.0 -> completely black
+    """
+
+    amount = max(0.0, min(1.0, amount))
+
+    black = Image.new(
+        "RGB",
+        image.size,
+        (0, 0, 0)
+    )
+
+    return Image.blend(
+        image.convert("RGB"),
+        black,
+        amount
+    )
+
 def render_clock(size: int) -> Image.Image:
     """
     Render a simple analog clock for the idle screen.
@@ -1383,10 +1408,10 @@ def run(args: argparse.Namespace) -> None:
     SHATTER_FRAME_COUNT = 14
 
     # How long the actual breaking movement takes
-    SHATTER_DURATION = 0.7
+    SHATTER_DURATION = args.shatter_duration
 
     # How long the broken CD stays afterward
-    SHATTER_HOLD_SECONDS = 5.0
+    SHATTER_HOLD_SECONDS = args.shatter_hold
 
     shatter_frames = None
     shatter_start_time = None
@@ -1406,6 +1431,21 @@ def run(args: argparse.Namespace) -> None:
 
     clock_image = render_clock(size)
     last_clock_minute = None
+
+    # =================================================
+    # Fade transitions
+    # =================================================
+
+    FADE_DURATION = args.fade_duration
+
+    previous_display_state = display_state
+
+    fade_active = False
+    fade_start_time = None
+
+    fade_from_image = None
+    fade_to_image = None
+    last_displayed_image = None
 
     # =================================================
     # Performance counters
@@ -1780,6 +1820,95 @@ def run(args: argparse.Namespace) -> None:
                 image = clock_image
 
             # =================================================
+            # Start fade when display state changes
+            # =================================================
+
+            fade_transitions = {
+                (IDLE, PLAYING),
+                (IDLE, PAUSED),
+
+                (PLAYING, SHATTERING),
+                (PAUSED, SHATTERING),
+
+                (SHATTER_HOLD, IDLE),
+            }
+
+            if display_state != previous_display_state:
+
+                if (
+                        previous_display_state,
+                        display_state
+                ) in fade_transitions:
+
+                    if last_displayed_image is not None:
+                        fade_from_image = (
+                            last_displayed_image.copy()
+                        )
+                    else:
+                        fade_from_image = image.copy()
+
+                    fade_to_image = image.copy()
+
+                    fade_start_time = time.monotonic()
+                    fade_active = True
+
+                previous_display_state = display_state
+
+            # =================================================
+            # Apply fade-out / fade-in
+            # =================================================
+
+            if (
+                    fade_active
+                    and fade_start_time is not None
+                    and fade_from_image is not None
+                    and fade_to_image is not None
+            ):
+
+                fade_elapsed = (
+                        time.monotonic()
+                        - fade_start_time
+                )
+
+                fade_progress = min(
+                    1.0,
+                    fade_elapsed / FADE_DURATION
+                )
+
+                # First half:
+                # old image fades to black
+                if fade_progress < 0.5:
+
+                    dark_amount = (
+                            fade_progress / 0.5
+                    )
+
+                    image = blend_with_black(
+                        fade_from_image,
+                        dark_amount
+                    )
+
+                # Second half:
+                # new image fades in from black
+                else:
+
+                    dark_amount = (
+                            1.0
+                            - (
+                                    (fade_progress - 0.5)
+                                    / 0.5
+                            )
+                    )
+
+                    image = blend_with_black(
+                        fade_to_image,
+                        dark_amount
+                    )
+
+                if fade_progress >= 1.0:
+                    fade_active = False
+                    image = fade_to_image
+            # =================================================
             # Finish render timing
             # =================================================
 
@@ -1797,6 +1926,8 @@ def run(args: argparse.Namespace) -> None:
             display_start = time.monotonic()
 
             display.show(image)
+
+            last_displayed_image = image.copy()
 
             display_time = (
                     time.monotonic()
@@ -1928,6 +2059,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--poll-seconds", type=positive_float, default=.5)
     parser.add_argument("--fps", type=positive_float, default=20.0)
     parser.add_argument("--rpm", type=positive_float, default=10.0)
+    parser.add_argument("--fade-duration",type=positive_float,default=0.30,help="Total fade-out/fade-in transition time in seconds.")
+    parser.add_argument("--shatter-duration",type=positive_float,default=0.7,help="Length of the CD shatter animation in seconds.")
+    parser.add_argument("--shatter-hold",type=positive_float,default=5.0,help="How long the shattered CD remains on screen in seconds.")
     parser.add_argument("--token-cache", type=Path, default=Path(".cache/spotify_token.json"))
     parser.add_argument("--mock-output", type=Path, help="Write the current frame PNG instead of using RGB matrix hardware.")
     parser.add_argument("--preview-frames", type=Path, help="Render sample spinning-album-art disk frames and exit.")
