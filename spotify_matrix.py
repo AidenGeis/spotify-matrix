@@ -517,7 +517,7 @@ def render_record(
 
     draw.ellipse(
         outer,
-        outline=(6, 6, 6, 255),
+        outline=(255, 105, 180, 255),
         width=max(1, size // 32)
     )
 
@@ -534,8 +534,8 @@ def render_record(
             center + label_radius,
             center + label_radius,
         ),
-        fill=(16, 16, 16, 210),
-        outline=(220, 220, 220, 90),
+        fill=(255, 105, 180, 220),
+        outline=(255, 190, 220, 255),
     )
 
     # Center hole
@@ -904,6 +904,50 @@ def render_idle(size: int) -> Image.Image:
     draw.ellipse((center - radius, center - radius, center + radius, center + radius), fill=(18, 18, 18))
     return frame
 
+def draw_heart(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    size: int = 3
+) -> None:
+    """
+    Draw a small pixel-friendly pink heart centered at (x, y).
+    """
+
+    pink = (255, 105, 180)
+
+    # Left rounded part of heart
+    draw.ellipse(
+        (
+            x - size,
+            y - size,
+            x,
+            y
+        ),
+        fill=pink
+    )
+
+    # Right rounded part of heart
+    draw.ellipse(
+        (
+            x,
+            y - size,
+            x + size,
+            y
+        ),
+        fill=pink
+    )
+
+    # Bottom pointed part of heart
+    draw.polygon(
+        [
+            (x - size, y - 1),
+            (x + size, y - 1),
+            (x, y + size),
+        ],
+        fill=pink
+    )
+
 def render_clock(size: int) -> Image.Image:
     """
     Render a simple analog clock for the idle screen.
@@ -1085,6 +1129,63 @@ def render_clock(size: int) -> Image.Image:
             center_y + pin_radius,
         ),
         fill=(255, 255, 255)
+    )
+
+    # =================================================
+    # Pink hearts in the four corners
+    # =================================================
+
+    # Top-right: one normal heart
+    draw_heart(
+        draw,
+        size - 6,
+        5,
+        size=3
+    )
+
+    # Bottom-left: one normal heart
+    draw_heart(
+        draw,
+        5,
+        size - 6,
+        size=3
+    )
+
+    # =================================================
+    # Top-left: two smaller hearts
+    # =================================================
+
+    draw_heart(
+        draw,
+        4,
+        4,
+        size=2
+    )
+
+    draw_heart(
+        draw,
+        9,
+        8,
+        size=2
+    )
+
+    # =================================================
+    # Bottom-right: two smaller hearts
+    # Opposite diagonal from top-left
+    # =================================================
+
+    draw_heart(
+        draw,
+        size - 10,
+        size - 5,
+        size=2
+    )
+
+    draw_heart(
+        draw,
+        size - 5,
+        size - 10,
+        size=2
     )
 
     return frame
@@ -1804,7 +1905,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Avoid Pi onboard sound conflict at the cost of more possible flicker.",
     )
-    parser.add_argument("--poll-seconds", type=positive_float, default=2.0)
+    parser.add_argument("--poll-seconds", type=positive_float, default=.5)
     parser.add_argument("--fps", type=positive_float, default=20.0)
     parser.add_argument("--rpm", type=positive_float, default=10.0)
     parser.add_argument("--token-cache", type=Path, default=Path(".cache/spotify_token.json"))
