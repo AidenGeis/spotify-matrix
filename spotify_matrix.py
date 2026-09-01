@@ -996,7 +996,6 @@ def render_clock(size: int) -> Image.Image:
 
     hour = current_time.tm_hour % 12
     minute = current_time.tm_min
-    second = current_time.tm_sec
 
 
     # Hour hand includes minute progress
@@ -1009,16 +1008,7 @@ def render_clock(size: int) -> Image.Image:
     )
 
     minute_angle = math.radians(
-        (
-            minute
-            + second / 60.0
-        ) * 6
-        - 90
-    )
-
-    second_angle = math.radians(
-        second * 6
-        - 90
+        minute * 6 - 90
     )
 
 
@@ -1080,37 +1070,6 @@ def render_clock(size: int) -> Image.Image:
         fill=(200, 200, 200),
         width=2
     )
-
-
-    # =================================================
-    # Second hand
-    # =================================================
-
-    second_length = radius * 0.78
-
-    second_x = (
-        center_x
-        + math.cos(second_angle)
-        * second_length
-    )
-
-    second_y = (
-        center_y
-        + math.sin(second_angle)
-        * second_length
-    )
-
-    draw.line(
-        (
-            center_x,
-            center_y,
-            int(second_x),
-            int(second_y)
-        ),
-        fill=(255, 80, 80),
-        width=1
-    )
-
 
     # =================================================
     # Center pin
@@ -1266,27 +1225,70 @@ def run(args: argparse.Namespace) -> None:
     )
     poll_thread.start()
 
+    # =================================================
+    # Display states
+    # =================================================
+
+    PLAYING = "PLAYING"
+    PAUSED = "PAUSED"
+    SHATTERING = "SHATTERING"
+    SHATTER_HOLD = "SHATTER_HOLD"
+    IDLE = "IDLE"
+
+    display_state = IDLE
+
+    # =================================================
+    # Record rotation
+    # =================================================
+
     angle = 0.0
     last_frame = time.monotonic()
-
-    # ---------------------------------------------------------
-    # Pre-rendered rotation frame cache
-    # ---------------------------------------------------------
 
     last_art_image = None
     rotation_frames = None
 
-    paused_image = None
-    was_playing = True
-
-    # Number of discrete angles in one full rotation.
-    # 60 is a good starting point for a 64x64 display.
     NUM_ROTATION_FRAMES = 60
 
+    # =================================================
+    # Pause overlay
+    # =================================================
 
-    # ---------------------------------------------------------
+    paused_image = None
+
+    # =================================================
+    # Shatter animation
+    # =================================================
+
+    SHATTER_FRAME_COUNT = 14
+
+    # How long the actual breaking movement takes
+    SHATTER_DURATION = 0.7
+
+    # How long the broken CD stays afterward
+    SHATTER_HOLD_SECONDS = 5.0
+
+    shatter_frames = None
+    shatter_start_time = None
+    shatter_hold_start = None
+    shatter_frame_index = 0
+
+    # Tracks whether Spotify previously had a song.
+    # This lets us detect the exact transition:
+    #
+    # SONG -> NO SONG
+    #
+    had_song = False
+
+    # =================================================
+    # Clock
+    # =================================================
+
+    clock_image = render_clock(size)
+    last_clock_minute = None
+
+    # =================================================
     # Performance counters
-    # ---------------------------------------------------------
+    # =================================================
 
     fps_frame_count = 0
     fps_start_time = time.monotonic()
@@ -1295,11 +1297,9 @@ def run(args: argparse.Namespace) -> None:
     total_render_time = 0.0
     total_display_time = 0.0
 
-
     try:
         while True:
             frame_start = time.monotonic()
-
 
             # =================================================
             # Get Spotify playback state
@@ -1311,101 +1311,363 @@ def run(args: argparse.Namespace) -> None:
                 current_art_image = playback_state.image
                 is_playing = playback_state.is_playing
 
-            lock_time = time.monotonic() - lock_start
+            lock_time = (
+                    time.monotonic()
+                    - lock_start
+            )
+
             total_lock_time += lock_time
 
+            has_song = (
+                    current_art_image is not None
+            )
+
             # =================================================
-            # Check whether album artwork changed
+            # New song / new album artwork
             # =================================================
 
-            if current_art_image is not last_art_image:
+            if (
+                    current_art_image is not None
+                    and current_art_image is not last_art_image
+            ):
+                print(
+                    f"Preparing {NUM_ROTATION_FRAMES} "
+                    f"rotation frames..."
+                )
 
-                if current_art_image is not None:
-                    print(
-                        f"Preparing {NUM_ROTATION_FRAMES} "
-                        f"rotation frames..."
-                    )
+                prepare_start = time.monotonic()
 
-                    prepare_start = time.monotonic()
+                rotation_frames = prepare_rotation_frames(
+                    current_art_image,
+                    size,
+                    NUM_ROTATION_FRAMES
+                )
 
-                    rotation_frames = prepare_rotation_frames(
-                        current_art_image,
-                        size,
-                        NUM_ROTATION_FRAMES
-                    )
+                prepare_elapsed = (
+                        time.monotonic()
+                        - prepare_start
+                )
 
-                    prepare_elapsed = (
-                            time.monotonic()
-                            - prepare_start
-                    )
-
-                    print(
-                        f"Rotation frames ready in "
-                        f"{prepare_elapsed:.2f} seconds"
-                    )
-
-                else:
-                    rotation_frames = None
+                print(
+                    f"Rotation frames ready in "
+                    f"{prepare_elapsed:.2f} seconds"
+                )
 
                 last_art_image = current_art_image
 
+                # New artwork means any old pause
+                # image is invalid.
+                paused_image = None
+
+                # Cancel an old shatter if Spotify
+                # starts playing something new.
+                shatter_frames = None
+                shatter_start_time = None
+                shatter_hold_start = None
+
+                # New CD starts upright.
+                angle = 0.0
 
             # =================================================
-            # Calculate rotation angle
+            # Determine display state
+            # =================================================
+
+            if has_song:
+
+                had_song = True
+
+                if is_playing:
+
+                    display_state = PLAYING
+                    paused_image = None
+
+                else:
+
+                    display_state = PAUSED
+
+
+            else:
+
+                # ---------------------------------------------
+                # Spotify JUST went from a song to no song
+                # ---------------------------------------------
+
+                if (
+                        had_song
+                        and rotation_frames is not None
+                ):
+
+                    print(
+                        "Spotify stopped - "
+                        "preparing shatter animation..."
+                    )
+
+                    # Find the exact record orientation that
+                    # was visible when playback disappeared.
+                    frame_index = int(
+                        (angle / 360.0)
+                        * len(rotation_frames)
+                    ) % len(rotation_frames)
+
+                    current_cd = (
+                        rotation_frames[
+                            frame_index
+                        ]
+                    )
+
+                    prepare_start = (
+                        time.monotonic()
+                    )
+
+                    shatter_frames = (
+                        prepare_shatter_frames(
+                            current_cd,
+                            SHATTER_FRAME_COUNT
+                        )
+                    )
+
+                    print(
+                        f"Shatter frames ready in "
+                        f"{time.monotonic() - prepare_start:.2f} "
+                        f"seconds"
+                    )
+
+                    shatter_start_time = (
+                        time.monotonic()
+                    )
+
+                    shatter_hold_start = None
+                    shatter_frame_index = 0
+
+                    display_state = SHATTERING
+
+                    # Prevent this block from firing
+                    # repeatedly every loop.
+                    had_song = False
+
+                    paused_image = None
+
+
+                # ---------------------------------------------
+                # No song and we're not currently doing
+                # the shatter sequence
+                # ---------------------------------------------
+
+                elif display_state not in (
+                        SHATTERING,
+                        SHATTER_HOLD
+                ):
+
+                    display_state = IDLE
+
+            # =================================================
+            # Time / rotation calculation
             # =================================================
 
             now = time.monotonic()
 
-            delta = now - last_frame
+            delta = (
+                    now
+                    - last_frame
+            )
 
             last_frame = now
 
             if (
-                is_playing
-                and rotation_frames is not None
+                    display_state == PLAYING
+                    and rotation_frames is not None
             ):
                 angle = (
-                    angle
-                    - 360.0
-                    * (args.rpm / 60.0)
-                    * delta
-                ) % 360.0
-
-
-            # =================================================
-            # Select already-rendered frame
-            # =================================================
+                                angle
+                                - 360.0
+                                * (args.rpm / 60.0)
+                                * delta
+                        ) % 360.0
 
             # =================================================
-            # Select already-rendered frame
+            # Advance shatter animation
+            # =================================================
+
+            if (
+                    display_state == SHATTERING
+                    and shatter_frames is not None
+                    and shatter_start_time is not None
+            ):
+
+                shatter_elapsed = (
+                        now
+                        - shatter_start_time
+                )
+
+                shatter_progress = min(
+                    1.0,
+                    shatter_elapsed
+                    / SHATTER_DURATION
+                )
+
+                shatter_frame_index = min(
+                    int(
+                        shatter_progress
+                        * len(shatter_frames)
+                    ),
+                    len(shatter_frames) - 1
+                )
+
+                # Animation has reached the final
+                # shattered position.
+                if shatter_progress >= 1.0:
+                    display_state = SHATTER_HOLD
+
+                    shatter_hold_start = now
+
+            # =================================================
+            # Hold broken CD for 5 seconds
+            # =================================================
+
+            if (
+                    display_state == SHATTER_HOLD
+                    and shatter_hold_start is not None
+            ):
+
+                if (
+                        now
+                        - shatter_hold_start
+                        >= SHATTER_HOLD_SECONDS
+                ):
+                    display_state = IDLE
+
+                    shatter_frames = None
+                    shatter_start_time = None
+                    shatter_hold_start = None
+
+                    # We're finished with the old album.
+                    rotation_frames = None
+                    last_art_image = None
+                    paused_image = None
+
+            # =================================================
+            # Select image to display
             # =================================================
 
             render_start = time.monotonic()
 
-            if rotation_frames is not None:
+            # -------------------------------------------------
+            # PLAYING
+            # -------------------------------------------------
+
+            if (
+                    display_state == PLAYING
+                    and rotation_frames is not None
+            ):
 
                 frame_index = int(
                     (angle / 360.0)
                     * len(rotation_frames)
                 ) % len(rotation_frames)
 
-                if is_playing:
-                    image = rotation_frames[frame_index]
-                    paused_image = None
+                image = (
+                    rotation_frames[
+                        frame_index
+                    ]
+                )
 
-                else:
-                    # Only create the pause image once
-                    if paused_image is None:
-                        paused_image = add_pause_overlay(
-                            rotation_frames[frame_index]
+
+            # -------------------------------------------------
+            # PAUSED
+            # -------------------------------------------------
+
+            elif (
+                    display_state == PAUSED
+                    and rotation_frames is not None
+            ):
+
+                frame_index = int(
+                    (angle / 360.0)
+                    * len(rotation_frames)
+                ) % len(rotation_frames)
+
+                # Only generate this once when
+                # playback becomes paused.
+                if paused_image is None:
+                    paused_image = (
+                        add_pause_overlay(
+                            rotation_frames[
+                                frame_index
+                            ]
                         )
+                    )
 
-                    image = paused_image
+                image = paused_image
+
+
+            # -------------------------------------------------
+            # SHATTERING
+            # -------------------------------------------------
+
+            elif (
+                    display_state == SHATTERING
+                    and shatter_frames is not None
+            ):
+
+                image = (
+                    shatter_frames[
+                        shatter_frame_index
+                    ]
+                )
+
+
+            # -------------------------------------------------
+            # SHATTERED CD HOLD
+            # -------------------------------------------------
+
+            elif (
+                    display_state == SHATTER_HOLD
+                    and shatter_frames is not None
+            ):
+
+                image = (
+                    shatter_frames[-1]
+                )
+
+
+            # -------------------------------------------------
+            # IDLE CLOCK
+            # -------------------------------------------------
 
             else:
-                image = idle
-                paused_image = None
 
+                current_minute = (
+                    time.strftime(
+                        "%Y%m%d%H%M"
+                    )
+                )
+
+                # No need to redraw the clock
+                # 20 times every second.
+                if (
+                        current_minute
+                        != last_clock_minute
+                ):
+                    clock_image = (
+                        render_clock(size)
+                    )
+
+                    last_clock_minute = (
+                        current_minute
+                    )
+
+                image = clock_image
+
+            # =================================================
+            # Finish render timing
+            # =================================================
+
+            render_time = (
+                    time.monotonic()
+                    - render_start
+            )
+
+            total_render_time += render_time
 
             # =================================================
             # Send frame to LED matrix
@@ -1416,12 +1678,11 @@ def run(args: argparse.Namespace) -> None:
             display.show(image)
 
             display_time = (
-                time.monotonic()
-                - display_start
+                    time.monotonic()
+                    - display_start
             )
 
             total_display_time += display_time
-
 
             # =================================================
             # --once support
@@ -1430,7 +1691,6 @@ def run(args: argparse.Namespace) -> None:
             if args.once:
                 break
 
-
             # =================================================
             # FPS / performance output
             # =================================================
@@ -1438,49 +1698,45 @@ def run(args: argparse.Namespace) -> None:
             fps_frame_count += 1
 
             elapsed = (
-                time.monotonic()
-                - fps_start_time
+                    time.monotonic()
+                    - fps_start_time
             )
 
             if elapsed >= 1.0:
-
                 actual_fps = (
-                    fps_frame_count
-                    / elapsed
+                        fps_frame_count
+                        / elapsed
                 )
 
                 avg_lock_ms = (
-                    total_lock_time
-                    / fps_frame_count
-                ) * 1000
+                                      total_lock_time
+                                      / fps_frame_count
+                              ) * 1000
 
                 avg_render_ms = (
-                    total_render_time
-                    / fps_frame_count
-                ) * 1000
-
+                                        total_render_time
+                                        / fps_frame_count
+                                ) * 1000
 
                 avg_display_ms = (
-                    total_display_time
-                    / fps_frame_count
-                ) * 1000
+                                         total_display_time
+                                         / fps_frame_count
+                                 ) * 1000
 
                 total_measured_ms = (
-                    avg_lock_ms
-                    + avg_render_ms
-                    + avg_display_ms
+                        avg_lock_ms
+                        + avg_render_ms
+                        + avg_display_ms
                 )
 
                 print(
+                    f"State: {display_state} | "
                     f"FPS: {actual_fps:.1f} | "
                     f"Lock: {avg_lock_ms:.1f} ms | "
                     f"Render: {avg_render_ms:.1f} ms | "
                     f"Display: {avg_display_ms:.1f} ms | "
                     f"Measured: {total_measured_ms:.1f} ms"
                 )
-
-
-                # Reset measurements
 
                 fps_frame_count = 0
 
@@ -1492,7 +1748,6 @@ def run(args: argparse.Namespace) -> None:
                 total_render_time = 0.0
                 total_display_time = 0.0
 
-
             # =================================================
             # Maintain requested FPS
             # =================================================
@@ -1501,8 +1756,8 @@ def run(args: argparse.Namespace) -> None:
                 0.0,
                 (1.0 / args.fps)
                 - (
-                    time.monotonic()
-                    - frame_start
+                        time.monotonic()
+                        - frame_start
                 )
             )
 
