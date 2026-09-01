@@ -515,10 +515,18 @@ def render_record(
         size - margin - 1
     )
 
+    # Black outline behind pink ring
+    draw.ellipse(
+        outer,
+        outline=(0, 0, 0, 255),
+        width=3
+    )
+
+    # Pink ring on top
     draw.ellipse(
         outer,
         outline=(255, 105, 180, 255),
-        width=max(1, size // 32)
+        width=2
     )
 
     center = size // 2
@@ -526,7 +534,20 @@ def render_record(
     label_radius = max(5, size // 11)
     hole_radius = max(2, size // 25)
 
-    # Center label
+    # Black outline around pink center
+    outline_radius = label_radius + 1
+
+    draw.ellipse(
+        (
+            center - outline_radius,
+            center - outline_radius,
+            center + outline_radius,
+            center + outline_radius,
+        ),
+        fill=(0, 0, 0, 255)
+    )
+
+    # Pink center
     draw.ellipse(
         (
             center - label_radius,
@@ -534,8 +555,7 @@ def render_record(
             center + label_radius,
             center + label_radius,
         ),
-        fill=(255, 105, 180, 220),
-        outline=(255, 190, 220, 255),
+        fill=(255, 105, 180, 255)
     )
 
     # Center hole
