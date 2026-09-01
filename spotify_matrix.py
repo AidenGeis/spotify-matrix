@@ -9,6 +9,7 @@ import os
 import secrets
 import threading
 import time
+import math
 import urllib.parse
 import urllib.request
 from email.message import Message
@@ -19,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageOps, ImageChops, ImageFont
 
 try:
     from dotenv import load_dotenv
@@ -393,16 +394,6 @@ def download_image(url: str) -> Image.Image:
     return Image.open(BytesIO(response.content)).convert("RGB")
 
 def prepare_album_art(art: Image.Image, size: int) -> Image.Image:
-    margin = max(2, size // 32)
-    disc_size = size - margin * 2
-
-    return ImageOps.fit(
-        art,
-        (disc_size, disc_size),
-        method=Image.Resampling.LANCZOS,
-    )
-
-def prepare_album_art(art: Image.Image, size: int) -> Image.Image:
     """
     Resize the album art once when the song/album changes.
     """
@@ -590,6 +581,318 @@ def prepare_rotation_frames(
 
     return frames
 
+def prepare_shatter_frames(
+    source: Image.Image,
+    frame_count: int = 14
+) -> list[Image.Image]:
+    """
+    Break the current CD into several large pieces and
+    pre-render the complete shatter animation.
+    """
+
+    size = source.width
+    center = size / 2
+
+    source = source.convert("RGBA")
+
+    # Large irregular pieces.
+    # Coordinates are fractions of the entire image.
+    piece_shapes = [
+        # Top-left
+        [
+            (0.00, 0.00),
+            (0.50, 0.00),
+            (0.43, 0.34),
+            (0.30, 0.49),
+            (0.00, 0.39),
+        ],
+
+        # Top-right
+        [
+            (0.50, 0.00),
+            (1.00, 0.00),
+            (1.00, 0.40),
+            (0.67, 0.43),
+            (0.43, 0.34),
+        ],
+
+        # Left-middle
+        [
+            (0.00, 0.39),
+            (0.30, 0.49),
+            (0.43, 0.61),
+            (0.28, 0.79),
+            (0.00, 0.71),
+        ],
+
+        # Center
+        [
+            (0.43, 0.34),
+            (0.67, 0.43),
+            (0.63, 0.69),
+            (0.43, 0.61),
+            (0.30, 0.49),
+        ],
+
+        # Right-middle
+        [
+            (0.67, 0.43),
+            (1.00, 0.40),
+            (1.00, 0.73),
+            (0.69, 0.79),
+            (0.63, 0.69),
+        ],
+
+        # Bottom-left
+        [
+            (0.00, 0.71),
+            (0.28, 0.79),
+            (0.50, 1.00),
+            (0.00, 1.00),
+        ],
+
+        # Bottom-right
+        [
+            (0.28, 0.79),
+            (0.43, 0.61),
+            (0.63, 0.69),
+            (0.69, 0.79),
+            (1.00, 0.73),
+            (1.00, 1.00),
+            (0.50, 1.00),
+        ],
+    ]
+
+    rotations = [
+        -18,
+        16,
+        -14,
+        7,
+        18,
+        -15,
+        14,
+    ]
+
+    pieces = []
+
+    # Only shatter the circular CD itself.
+    disc_mask = Image.new(
+        "L",
+        (size, size),
+        0
+    )
+
+    disc_draw = ImageDraw.Draw(disc_mask)
+
+    margin = max(2, size // 32)
+
+    disc_draw.ellipse(
+        (
+            margin,
+            margin,
+            size - margin - 1,
+            size - margin - 1,
+        ),
+        fill=255
+    )
+
+    # -------------------------------------------------
+    # Extract each piece
+    # -------------------------------------------------
+
+    for index, normalized_points in enumerate(piece_shapes):
+
+        points = [
+            (
+                int(x * size),
+                int(y * size)
+            )
+            for x, y in normalized_points
+        ]
+
+        polygon_mask = Image.new(
+            "L",
+            (size, size),
+            0
+        )
+
+        polygon_draw = ImageDraw.Draw(
+            polygon_mask
+        )
+
+        polygon_draw.polygon(
+            points,
+            fill=255
+        )
+
+        # Intersection of:
+        # irregular piece AND circular record.
+        mask = ImageChops.multiply(
+            polygon_mask,
+            disc_mask
+        )
+
+        bbox = mask.getbbox()
+
+        if bbox is None:
+            continue
+
+        piece = source.crop(bbox)
+        piece_mask = mask.crop(bbox)
+
+        piece.putalpha(piece_mask)
+
+        piece_center_x = (
+            bbox[0] + bbox[2]
+        ) / 2
+
+        piece_center_y = (
+            bbox[1] + bbox[3]
+        ) / 2
+
+        dx = (
+            piece_center_x
+            - center
+        )
+
+        dy = (
+            piece_center_y
+            - center
+        )
+
+        distance = math.hypot(
+            dx,
+            dy
+        )
+
+        if distance > 0:
+            direction_x = dx / distance
+            direction_y = dy / distance
+        else:
+            direction_x = 0
+            direction_y = -1
+
+        # Different pieces travel slightly
+        # different distances.
+        travel = 8 + (index % 3) * 2
+
+        pieces.append(
+            {
+                "image": piece,
+                "bbox": bbox,
+                "dx": direction_x * travel,
+                "dy": direction_y * travel,
+                "rotation": rotations[index],
+            }
+        )
+
+    # -------------------------------------------------
+    # Pre-render animation
+    # -------------------------------------------------
+
+    frames = []
+
+    for frame_number in range(frame_count):
+
+        if frame_count == 1:
+            progress = 1.0
+        else:
+            progress = (
+                frame_number
+                / (frame_count - 1)
+            )
+
+        # Ease-out:
+        # pieces move quickly at first,
+        # then slow down.
+        movement = (
+            1.0
+            - (1.0 - progress) ** 3
+        )
+
+        frame = Image.new(
+            "RGBA",
+            (size, size),
+            (0, 0, 0, 255)
+        )
+
+        for piece_data in pieces:
+
+            piece = piece_data["image"]
+            bbox = piece_data["bbox"]
+
+            rotation = (
+                piece_data["rotation"]
+                * movement
+            )
+
+            rotated_piece = piece.rotate(
+                rotation,
+                resample=Image.Resampling.BICUBIC,
+                expand=True
+            )
+
+            x_offset = (
+                piece_data["dx"]
+                * movement
+            )
+
+            y_offset = (
+                piece_data["dy"]
+                * movement
+            )
+
+            # Slight gravity
+            y_offset += (
+                3
+                * movement
+                * movement
+            )
+
+            original_width = (
+                bbox[2] - bbox[0]
+            )
+
+            original_height = (
+                bbox[3] - bbox[1]
+            )
+
+            expansion_x = (
+                rotated_piece.width
+                - original_width
+            ) / 2
+
+            expansion_y = (
+                rotated_piece.height
+                - original_height
+            ) / 2
+
+            x = int(
+                bbox[0]
+                + x_offset
+                - expansion_x
+            )
+
+            y = int(
+                bbox[1]
+                + y_offset
+                - expansion_y
+            )
+
+            # Paste with its own alpha channel.
+            # Negative coordinates are okay; Pillow
+            # clips anything outside the display.
+            frame.paste(
+                rotated_piece,
+                (x, y),
+                rotated_piece
+            )
+
+        frames.append(
+            frame.convert("RGB")
+        )
+
+    return frames
 
 def render_idle(size: int) -> Image.Image:
     frame = Image.new("RGB", (size, size), (0, 0, 0))
@@ -601,6 +904,231 @@ def render_idle(size: int) -> Image.Image:
     draw.ellipse((center - radius, center - radius, center + radius, center + radius), fill=(18, 18, 18))
     return frame
 
+def render_clock(size: int) -> Image.Image:
+    """
+    Render a simple analog clock for the idle screen.
+    """
+
+    frame = Image.new(
+        "RGB",
+        (size, size),
+        (0, 0, 0)
+    )
+
+    draw = ImageDraw.Draw(frame)
+
+    center_x = size // 2
+    center_y = size // 2
+
+    radius = size // 2 - 3
+
+    # =================================================
+    # Outer clock circle
+    # =================================================
+
+    draw.ellipse(
+        (
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+        ),
+        outline=(180, 180, 180),
+        width=2
+    )
+
+
+    # =================================================
+    # Hour markers
+    # =================================================
+
+    for hour in range(12):
+
+        angle = math.radians(
+            hour * 30 - 90
+        )
+
+        # Make the 12, 3, 6, and 9 markers longer
+        if hour % 3 == 0:
+            inner_radius = radius - 6
+            width = 2
+        else:
+            inner_radius = radius - 3
+            width = 1
+
+        outer_x = (
+            center_x
+            + math.cos(angle) * (radius - 2)
+        )
+
+        outer_y = (
+            center_y
+            + math.sin(angle) * (radius - 2)
+        )
+
+        inner_x = (
+            center_x
+            + math.cos(angle) * inner_radius
+        )
+
+        inner_y = (
+            center_y
+            + math.sin(angle) * inner_radius
+        )
+
+        draw.line(
+            (
+                int(inner_x),
+                int(inner_y),
+                int(outer_x),
+                int(outer_y),
+            ),
+            fill=(220, 220, 220),
+            width=width
+        )
+
+
+    # =================================================
+    # Current time
+    # =================================================
+
+    current_time = time.localtime()
+
+    hour = current_time.tm_hour % 12
+    minute = current_time.tm_min
+    second = current_time.tm_sec
+
+
+    # Hour hand includes minute progress
+    hour_angle = math.radians(
+        (
+            hour
+            + minute / 60.0
+        ) * 30
+        - 90
+    )
+
+    minute_angle = math.radians(
+        (
+            minute
+            + second / 60.0
+        ) * 6
+        - 90
+    )
+
+    second_angle = math.radians(
+        second * 6
+        - 90
+    )
+
+
+    # =================================================
+    # Hour hand
+    # =================================================
+
+    hour_length = radius * 0.50
+
+    hour_x = (
+        center_x
+        + math.cos(hour_angle)
+        * hour_length
+    )
+
+    hour_y = (
+        center_y
+        + math.sin(hour_angle)
+        * hour_length
+    )
+
+    draw.line(
+        (
+            center_x,
+            center_y,
+            int(hour_x),
+            int(hour_y)
+        ),
+        fill=(255, 255, 255),
+        width=3
+    )
+
+
+    # =================================================
+    # Minute hand
+    # =================================================
+
+    minute_length = radius * 0.72
+
+    minute_x = (
+        center_x
+        + math.cos(minute_angle)
+        * minute_length
+    )
+
+    minute_y = (
+        center_y
+        + math.sin(minute_angle)
+        * minute_length
+    )
+
+    draw.line(
+        (
+            center_x,
+            center_y,
+            int(minute_x),
+            int(minute_y)
+        ),
+        fill=(200, 200, 200),
+        width=2
+    )
+
+
+    # =================================================
+    # Second hand
+    # =================================================
+
+    second_length = radius * 0.78
+
+    second_x = (
+        center_x
+        + math.cos(second_angle)
+        * second_length
+    )
+
+    second_y = (
+        center_y
+        + math.sin(second_angle)
+        * second_length
+    )
+
+    draw.line(
+        (
+            center_x,
+            center_y,
+            int(second_x),
+            int(second_y)
+        ),
+        fill=(255, 80, 80),
+        width=1
+    )
+
+
+    # =================================================
+    # Center pin
+    # =================================================
+
+    pin_radius = 2
+
+    draw.ellipse(
+        (
+            center_x - pin_radius,
+            center_y - pin_radius,
+            center_x + pin_radius,
+            center_y + pin_radius,
+        ),
+        fill=(255, 255, 255)
+    )
+
+    return frame
 
 def render_test_pattern(size: int, offset: int) -> Image.Image:
     frame = Image.new("RGB", (size, size), (0, 0, 0))
