@@ -49,6 +49,13 @@ class SharedPlaybackState:
     image: Image.Image | None = None
     is_playing: bool = False
 
+@dataclass
+class WeatherState:
+    temperature: float | None = None
+    weather_code: int | None = None
+    high: float | None = None
+    low: float | None = None
+    is_day: bool = True
 
 @dataclass
 class HttpResponse:
@@ -508,6 +515,10 @@ def render_record(
     # Draw record details
     draw = ImageDraw.Draw(frame, "RGBA")
 
+    # =================================================
+    # Outer rings
+    # =================================================
+
     outer = (
         margin,
         margin,
@@ -515,37 +526,35 @@ def render_record(
         size - margin - 1
     )
 
-    # Black outline behind pink ring
-    draw.ellipse(
-        outer,
-        outline=(255,255,255, 255),
-        width=3
+    white_outer = (
+        outer[0] - 1,
+        outer[1] - 1,
+        outer[2] + 1,
+        outer[3] + 1
     )
 
-    # Pink ring on top
+    # White outer ring
+    draw.ellipse(
+        white_outer,
+        outline=(255, 255, 255, 255),
+        width=1
+    )
+
+    # Thin pink outer ring
     draw.ellipse(
         outer,
         outline=(255, 105, 180, 255),
-        width=2
+        width=1
     )
+
+    # =================================================
+    # Center circle
+    # =================================================
 
     center = size // 2
 
     label_radius = max(5, size // 11)
     hole_radius = max(2, size // 25)
-
-    # Black outline around pink center
-    outline_radius = label_radius + 1
-
-    draw.ellipse(
-        (
-            center - outline_radius,
-            center - outline_radius,
-            center + outline_radius,
-            center + outline_radius,
-        ),
-        fill=(255,255,255, 255)
-    )
 
     # Pink center
     draw.ellipse(
@@ -556,6 +565,20 @@ def render_record(
             center + label_radius,
         ),
         fill=(255, 105, 180, 255)
+    )
+
+    # White ring farther inward
+    white_radius = label_radius - 2
+
+    draw.ellipse(
+        (
+            center - white_radius,
+            center - white_radius,
+            center + white_radius,
+            center + white_radius,
+        ),
+        outline=(255, 255, 255, 255),
+        width=1
     )
 
     # Center hole
@@ -1235,6 +1258,168 @@ def render_clock(size: int) -> Image.Image:
 
     return frame
 
+def render_weather(
+    size: int,
+    temperature: float | None,
+    weather_code: int | None,
+    high: float | None,
+    low: float | None,
+    is_day: bool,
+) -> Image.Image:
+    """
+    Render weather information for the
+    64x64 RGB matrix.
+    """
+
+    frame = Image.new(
+        "RGB",
+        (size, size),
+        (0, 0, 0)
+    )
+
+    draw = ImageDraw.Draw(frame)
+
+    font = ImageFont.load_default()
+
+
+    # =================================================
+    # WEATHER NOT READY YET
+    # =================================================
+
+    if (
+        temperature is None
+        or weather_code is None
+    ):
+
+        text = "WEATHER"
+
+        bbox = draw.textbbox(
+            (0, 0),
+            text,
+            font=font
+        )
+
+        text_width = (
+            bbox[2] - bbox[0]
+        )
+
+        draw.text(
+            (
+                (size - text_width) // 2,
+                28
+            ),
+            text,
+            fill=(180, 180, 180),
+            font=font
+        )
+
+        return frame
+
+
+    # =================================================
+    # WEATHER ICON
+    # =================================================
+
+    draw_weather_icon(
+        draw,
+        int(weather_code),
+        is_day
+    )
+
+
+    # =================================================
+    # CURRENT TEMPERATURE
+    # =================================================
+
+    temperature_text = (
+        f"{round(temperature)}F"
+    )
+
+    bbox = draw.textbbox(
+        (0, 0),
+        temperature_text,
+        font=font
+    )
+
+    text_width = (
+        bbox[2] - bbox[0]
+    )
+
+    draw.text(
+        (
+            (size - text_width) // 2,
+            36
+        ),
+        temperature_text,
+        fill=(255, 255, 255),
+        font=font
+    )
+
+
+    # =================================================
+    # HIGH / LOW
+    # =================================================
+
+    if (
+        high is not None
+        and low is not None
+    ):
+
+        high_low_text = (
+            f"H{round(high)} L{round(low)}"
+        )
+
+        bbox = draw.textbbox(
+            (0, 0),
+            high_low_text,
+            font=font
+        )
+
+        text_width = (
+            bbox[2] - bbox[0]
+        )
+
+        draw.text(
+            (
+                (size - text_width) // 2,
+                47
+            ),
+            high_low_text,
+            fill=(210, 210, 210),
+            font=font
+        )
+
+    # =================================================
+    # DATE
+    # =================================================
+
+    current_date = time.strftime(
+        "%b %d"
+    ).upper()
+
+    bbox = draw.textbbox(
+        (0, 0),
+        current_date,
+        font=font
+    )
+
+    text_width = (
+            bbox[2] - bbox[0]
+    )
+
+    draw.text(
+        (
+            (size - text_width) // 2,
+            56
+        ),
+        current_date,
+        fill=(255, 105, 180),
+        font=font
+    )
+
+    return frame
+
+
 def render_test_pattern(size: int, offset: int) -> Image.Image:
     frame = Image.new("RGB", (size, size), (0, 0, 0))
     draw = ImageDraw.Draw(frame)
@@ -1257,6 +1442,436 @@ def render_test_pattern(size: int, offset: int) -> Image.Image:
     draw.rectangle((0, 0, size - 1, size - 1), outline=(255, 255, 255))
     return frame
 
+def fetch_weather(
+    latitude: float,
+    longitude: float
+) -> dict[str, Any]:
+    """
+    Fetch current weather and today's high/low
+    from Open-Meteo.
+    """
+
+    params = urllib.parse.urlencode(
+        {
+            "latitude": latitude,
+            "longitude": longitude,
+
+            "current": (
+                "temperature_2m,"
+                "weather_code,"
+                "is_day"
+            ),
+
+            "daily": (
+                "temperature_2m_max,"
+                "temperature_2m_min"
+            ),
+
+            "temperature_unit": "fahrenheit",
+            "timezone": "auto",
+            "forecast_days": 1,
+        }
+    )
+
+    url = (
+        "https://api.open-meteo.com/v1/forecast?"
+        + params
+    )
+
+    response = http_request(
+        "GET",
+        url,
+        timeout=10
+    )
+
+    if response.status != 200:
+        raise_http_error(
+            response,
+            "Weather request"
+        )
+
+    return response.json()
+
+
+def poll_weather(
+    weather_state: WeatherState,
+    weather_lock: threading.Lock,
+    stop_event: threading.Event,
+    latitude: float,
+    longitude: float,
+    update_seconds: float,
+) -> None:
+    """
+    Update weather information in the background.
+    """
+
+    while not stop_event.is_set():
+
+        try:
+
+            data = fetch_weather(
+                latitude,
+                longitude
+            )
+
+            current = data.get(
+                "current",
+                {}
+            )
+
+            daily = data.get(
+                "daily",
+                {}
+            )
+
+            high_values = daily.get(
+                "temperature_2m_max",
+                []
+            )
+
+            low_values = daily.get(
+                "temperature_2m_min",
+                []
+            )
+
+            with weather_lock:
+
+                weather_state.temperature = (
+                    current.get(
+                        "temperature_2m"
+                    )
+                )
+
+                weather_state.weather_code = (
+                    current.get(
+                        "weather_code"
+                    )
+                )
+
+                weather_state.is_day = bool(
+                    current.get(
+                        "is_day",
+                        1
+                    )
+                )
+
+                if high_values:
+                    weather_state.high = (
+                        high_values[0]
+                    )
+
+                if low_values:
+                    weather_state.low = (
+                        low_values[0]
+                    )
+
+            print(
+                "Weather updated: "
+                f"{weather_state.temperature} F",
+                flush=True
+            )
+
+        except Exception as exc:
+
+            print(
+                f"Weather update failed: {exc}",
+                flush=True
+            )
+
+        stop_event.wait(
+            update_seconds
+        )
+
+def draw_weather_icon(
+    draw: ImageDraw.ImageDraw,
+    code: int,
+    is_day: bool,
+) -> None:
+    """
+    Draw a simple weather icon suitable
+    for a 64x64 RGB matrix.
+    """
+
+    # =================================================
+    # CLEAR
+    # =================================================
+
+    if code == 0:
+
+        # Sun
+        center_x = 32
+        center_y = 15
+        radius = 6
+
+        draw.ellipse(
+            (
+                center_x - radius,
+                center_y - radius,
+                center_x + radius,
+                center_y + radius,
+            ),
+            fill=(255, 210, 50)
+        )
+
+        # Sun rays
+        for angle_degrees in range(
+            0,
+            360,
+            45
+        ):
+
+            angle = math.radians(
+                angle_degrees
+            )
+
+            inner = 9
+            outer = 12
+
+            x1 = int(
+                center_x
+                + math.cos(angle)
+                * inner
+            )
+
+            y1 = int(
+                center_y
+                + math.sin(angle)
+                * inner
+            )
+
+            x2 = int(
+                center_x
+                + math.cos(angle)
+                * outer
+            )
+
+            y2 = int(
+                center_y
+                + math.sin(angle)
+                * outer
+            )
+
+            draw.line(
+                (x1, y1, x2, y2),
+                fill=(255, 210, 50),
+                width=1
+            )
+
+        return
+
+
+    # =================================================
+    # PARTLY CLOUDY
+    # =================================================
+
+    if code in (1, 2):
+
+        # Small sun
+        draw.ellipse(
+            (20, 6, 31, 17),
+            fill=(255, 210, 50)
+        )
+
+        # Cloud
+        draw.ellipse(
+            (22, 12, 36, 24),
+            fill=(210, 210, 220)
+        )
+
+        draw.ellipse(
+            (31, 9, 44, 24),
+            fill=(210, 210, 220)
+        )
+
+        draw.rectangle(
+            (22, 17, 44, 24),
+            fill=(210, 210, 220)
+        )
+
+        return
+
+
+    # =================================================
+    # CLOUDY / FOG
+    # =================================================
+
+    if code in (
+        3,
+        45,
+        48
+    ):
+
+        draw.ellipse(
+            (17, 11, 34, 25),
+            fill=(180, 180, 190)
+        )
+
+        draw.ellipse(
+            (29, 7, 46, 25),
+            fill=(180, 180, 190)
+        )
+
+        draw.rectangle(
+            (17, 18, 46, 25),
+            fill=(180, 180, 190)
+        )
+
+        if code in (45, 48):
+
+            draw.line(
+                (18, 29, 45, 29),
+                fill=(130, 130, 140),
+                width=1
+            )
+
+            draw.line(
+                (22, 33, 42, 33),
+                fill=(130, 130, 140),
+                width=1
+            )
+
+        return
+
+
+    # =================================================
+    # RAIN
+    # =================================================
+
+    if (
+        51 <= code <= 67
+        or 80 <= code <= 82
+    ):
+
+        # Cloud
+        draw.ellipse(
+            (17, 8, 34, 22),
+            fill=(175, 175, 185)
+        )
+
+        draw.ellipse(
+            (29, 6, 46, 22),
+            fill=(175, 175, 185)
+        )
+
+        draw.rectangle(
+            (17, 15, 46, 22),
+            fill=(175, 175, 185)
+        )
+
+        # Rain drops
+        for x in (
+            21,
+            29,
+            37,
+            45
+        ):
+
+            draw.line(
+                (
+                    x,
+                    26,
+                    x - 2,
+                    31
+                ),
+                fill=(70, 160, 255),
+                width=2
+            )
+
+        return
+
+
+    # =================================================
+    # SNOW
+    # =================================================
+
+    if (
+        71 <= code <= 77
+        or 85 <= code <= 86
+    ):
+
+        # Cloud
+        draw.ellipse(
+            (17, 8, 34, 22),
+            fill=(190, 190, 200)
+        )
+
+        draw.ellipse(
+            (29, 6, 46, 22),
+            fill=(190, 190, 200)
+        )
+
+        draw.rectangle(
+            (17, 15, 46, 22),
+            fill=(190, 190, 200)
+        )
+
+        # Snow dots
+        for x, y in (
+            (21, 27),
+            (30, 30),
+            (39, 27),
+            (45, 32),
+        ):
+
+            draw.ellipse(
+                (
+                    x - 1,
+                    y - 1,
+                    x + 1,
+                    y + 1
+                ),
+                fill=(255, 255, 255)
+            )
+
+        return
+
+
+    # =================================================
+    # THUNDERSTORM
+    # =================================================
+
+    if 95 <= code <= 99:
+
+        # Cloud
+        draw.ellipse(
+            (17, 8, 34, 22),
+            fill=(150, 150, 165)
+        )
+
+        draw.ellipse(
+            (29, 6, 46, 22),
+            fill=(150, 150, 165)
+        )
+
+        draw.rectangle(
+            (17, 15, 46, 22),
+            fill=(150, 150, 165)
+        )
+
+        # Lightning bolt
+        draw.polygon(
+            [
+                (33, 23),
+                (28, 32),
+                (33, 31),
+                (29, 40),
+                (39, 28),
+                (34, 29),
+            ],
+            fill=(255, 220, 40)
+        )
+
+        return
+
+
+    # =================================================
+    # UNKNOWN
+    # =================================================
+
+    draw.ellipse(
+        (18, 9, 45, 26),
+        fill=(180, 180, 190)
+    )
 
 def poll_spotify(
     spotify: SpotifyClient,
@@ -1372,6 +1987,28 @@ def run(args: argparse.Namespace) -> None:
     poll_thread.start()
 
     # =================================================
+    # Weather background thread
+    # =================================================
+
+    weather_state = WeatherState()
+    weather_lock = threading.Lock()
+
+    weather_thread = threading.Thread(
+        target=poll_weather,
+        args=(
+            weather_state,
+            weather_lock,
+            stop_event,
+            args.weather_latitude,
+            args.weather_longitude,
+            args.weather_update_seconds,
+        ),
+        daemon=True,
+    )
+
+    weather_thread.start()
+
+    # =================================================
     # Display states
     # =================================================
 
@@ -1426,11 +2063,47 @@ def run(args: argparse.Namespace) -> None:
     had_song = False
 
     # =================================================
-    # Clock
+    # Idle screens
     # =================================================
 
     clock_image = render_clock(size)
     last_clock_minute = None
+
+    weather_image = render_weather(
+        size,
+        None,
+        None,
+        None,
+        None,
+        True
+    )
+
+    last_weather_render_key = None
+
+    # How long each idle screen remains
+    # fully visible.
+    IDLE_SCREEN_DURATION = (
+        args.idle_screen_duration
+    )
+
+    idle_screens = [
+        "CLOCK",
+        "WEATHER",
+    ]
+
+    idle_screen_index = 0
+
+    current_idle_screen = (
+        idle_screens[idle_screen_index]
+    )
+
+    previous_idle_screen = (
+        current_idle_screen
+    )
+
+    idle_screen_start_time = (
+        time.monotonic()
+    )
 
     # =================================================
     # Fade transitions
@@ -1471,6 +2144,32 @@ def run(args: argparse.Namespace) -> None:
             with playback_lock:
                 current_art_image = playback_state.image
                 is_playing = playback_state.is_playing
+
+            # =================================================
+            # Get current weather state
+            # =================================================
+
+            with weather_lock:
+
+                current_temperature = (
+                    weather_state.temperature
+                )
+
+                current_weather_code = (
+                    weather_state.weather_code
+                )
+
+                current_weather_high = (
+                    weather_state.high
+                )
+
+                current_weather_low = (
+                    weather_state.low
+                )
+
+                current_weather_is_day = (
+                    weather_state.is_day
+                )
 
             lock_time = (
                     time.monotonic()
@@ -1621,6 +2320,7 @@ def run(args: argparse.Namespace) -> None:
 
                     display_state = IDLE
 
+
             # =================================================
             # Time / rotation calculation
             # =================================================
@@ -1697,6 +2397,20 @@ def run(args: argparse.Namespace) -> None:
                 ):
                     display_state = IDLE
 
+                    # Always restart idle mode
+                    # from the clock.
+                    idle_screen_index = 0
+
+                    current_idle_screen = (
+                        idle_screens[0]
+                    )
+
+                    previous_idle_screen = (
+                        current_idle_screen
+                    )
+
+                    idle_screen_start_time = now
+
                     shatter_frames = None
                     shatter_start_time = None
                     shatter_hold_start = None
@@ -1706,6 +2420,36 @@ def run(args: argparse.Namespace) -> None:
                     last_art_image = None
                     paused_image = None
 
+                    # =================================================
+                    # Rotate idle screens
+                    # =================================================
+
+                if display_state == IDLE:
+
+                    idle_elapsed = (
+                            now
+                            - idle_screen_start_time
+                    )
+
+                    if (
+                            idle_elapsed >= IDLE_SCREEN_DURATION
+                            and not fade_active
+                    ):
+                        idle_screen_index = (
+                                                    idle_screen_index + 1
+                                            ) % len(idle_screens)
+
+                        current_idle_screen = (
+                            idle_screens[
+                                idle_screen_index
+                            ]
+                        )
+
+                        # Start the next 10-second timer
+                        # after the fade finishes.
+                        idle_screen_start_time = (
+                                now + FADE_DURATION
+                        )
             # =================================================
             # Select image to display
             # =================================================
@@ -1792,32 +2536,78 @@ def run(args: argparse.Namespace) -> None:
 
 
             # -------------------------------------------------
-            # IDLE CLOCK
+            # IDLE SCREENS
             # -------------------------------------------------
 
             else:
 
-                current_minute = (
-                    time.strftime(
-                        "%Y%m%d%H%M"
-                    )
-                )
+                # =============================================
+                # CLOCK
+                # =============================================
 
-                # No need to redraw the clock
-                # 20 times every second.
-                if (
-                        current_minute
-                        != last_clock_minute
-                ):
-                    clock_image = (
-                        render_clock(size)
+                if current_idle_screen == "CLOCK":
+
+                    current_minute = (
+                        time.strftime(
+                            "%Y%m%d%H%M"
+                        )
                     )
 
-                    last_clock_minute = (
-                        current_minute
+                    # No need to redraw the clock
+                    # every frame.
+                    if (
+                            current_minute
+                            != last_clock_minute
+                    ):
+                        clock_image = (
+                            render_clock(size)
+                        )
+
+                        last_clock_minute = (
+                            current_minute
+                        )
+
+                    image = clock_image
+
+
+                # =============================================
+                # WEATHER
+                # =============================================
+
+                elif current_idle_screen == "WEATHER":
+
+                    current_weather_date = time.strftime(
+                        "%Y%m%d"
                     )
 
-                image = clock_image
+                    weather_render_key = (
+                        current_temperature,
+                        current_weather_code,
+                        current_weather_high,
+                        current_weather_low,
+                        current_weather_is_day,
+                        current_weather_date,
+                    )
+
+                    # Only redraw if weather changed.
+                    if (
+                            weather_render_key
+                            != last_weather_render_key
+                    ):
+                        weather_image = render_weather(
+                            size,
+                            current_temperature,
+                            current_weather_code,
+                            current_weather_high,
+                            current_weather_low,
+                            current_weather_is_day,
+                        )
+
+                        last_weather_render_key = (
+                            weather_render_key
+                        )
+
+                    image = weather_image
 
             # =================================================
             # Start fade when display state changes
@@ -1826,9 +2616,6 @@ def run(args: argparse.Namespace) -> None:
             fade_transitions = {
                 (IDLE, PLAYING),
                 (IDLE, PAUSED),
-
-                (PLAYING, SHATTERING),
-                (PAUSED, SHATTERING),
 
                 (SHATTER_HOLD, IDLE),
             }
@@ -1853,6 +2640,44 @@ def run(args: argparse.Namespace) -> None:
                     fade_active = True
 
                 previous_display_state = display_state
+
+            # =================================================
+            # Fade between idle screens
+            # =================================================
+
+            idle_screen_changed = (
+                    display_state == IDLE
+                    and current_idle_screen
+                    != previous_idle_screen
+            )
+
+            if idle_screen_changed:
+
+                if last_displayed_image is not None:
+
+                    fade_from_image = (
+                        last_displayed_image.copy()
+                    )
+
+                else:
+
+                    fade_from_image = (
+                        image.copy()
+                    )
+
+                fade_to_image = (
+                    image.copy()
+                )
+
+                fade_start_time = (
+                    time.monotonic()
+                )
+
+                fade_active = True
+
+                previous_idle_screen = (
+                    current_idle_screen
+                )
 
             # =================================================
             # Apply fade-out / fade-in
@@ -2020,9 +2845,15 @@ def run(args: argparse.Namespace) -> None:
         pass
 
 
+
     finally:
+
         stop_event.set()
+
         poll_thread.join(timeout=1)
+
+        weather_thread.join(timeout=1)
+
         display.clear()
 
 
@@ -2069,6 +2900,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-pattern", action="store_true", help="Show a bright moving color test pattern without using Spotify.")
     parser.add_argument("--once", action="store_true", help="Render one frame and exit.")
     parser.add_argument("--no-browser", action="store_true", help="Print the Spotify auth URL without trying to open a browser.")
+    parser.add_argument("--idle-screen-duration",type=positive_float,default=10.0,help="Seconds each idle screen stays visible.")
+    parser.add_argument("--weather-update-seconds",type=positive_float,default=900.0,help="Seconds between weather updates.")
+    parser.add_argument("--weather-latitude",type=float,default=29.6516,help="Latitude used for weather.")
+    parser.add_argument("--weather-longitude",type=float,default=-82.3248,help="Longitude used for weather.")
     return parser
 
 
