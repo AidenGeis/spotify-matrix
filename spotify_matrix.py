@@ -1266,10 +1266,6 @@ def render_weather(
     low: float | None,
     is_day: bool,
 ) -> Image.Image:
-    """
-    Render weather information for the
-    64x64 RGB matrix.
-    """
 
     frame = Image.new(
         "RGB",
@@ -1280,6 +1276,35 @@ def render_weather(
     draw = ImageDraw.Draw(frame)
 
     font = ImageFont.load_default()
+
+
+    # =================================================
+    # DATE
+    # =================================================
+
+    current_date = time.strftime(
+        "%b %d"
+    ).upper()
+
+    bbox = draw.textbbox(
+        (0, 0),
+        current_date,
+        font=font
+    )
+
+    text_width = (
+        bbox[2] - bbox[0]
+    )
+
+    draw.text(
+        (
+            (size - text_width) // 2,
+            1
+        ),
+        current_date,
+        fill=(255, 105, 180),
+        font=font
+    )
 
 
     # =================================================
@@ -1306,7 +1331,7 @@ def render_weather(
         draw.text(
             (
                 (size - text_width) // 2,
-                28
+                30
             ),
             text,
             fill=(180, 180, 180),
@@ -1348,7 +1373,7 @@ def render_weather(
     draw.text(
         (
             (size - text_width) // 2,
-            36
+            38
         ),
         temperature_text,
         fill=(255, 255, 255),
@@ -1366,7 +1391,7 @@ def render_weather(
     ):
 
         high_low_text = (
-            f"H{round(high)} L{round(low)}"
+            f"H: {round(high)} L: {round(low)}"
         )
 
         bbox = draw.textbbox(
@@ -1382,39 +1407,172 @@ def render_weather(
         draw.text(
             (
                 (size - text_width) // 2,
-                47
+                51
             ),
             high_low_text,
             fill=(210, 210, 210),
             font=font
         )
 
-    # =================================================
-    # DATE
-    # =================================================
 
-    current_date = time.strftime(
-        "%b %d"
-    ).upper()
+    return frame
 
-    bbox = draw.textbbox(
-        (0, 0),
-        current_date,
-        font=font
+def render_birthday(
+    size: int,
+) -> Image.Image:
+
+    frame = Image.new(
+        "RGB",
+        (size, size),
+        (0, 0, 0)
     )
 
-    text_width = (
+    draw = ImageDraw.Draw(frame)
+
+    font = ImageFont.load_default()
+
+
+    # =================================================
+    # HELPER FOR CENTERED TEXT
+    # =================================================
+
+    def centered_text(
+        text,
+        y,
+        color
+    ):
+
+        bbox = draw.textbbox(
+            (0, 0),
+            text,
+            font=font
+        )
+
+        text_width = (
             bbox[2] - bbox[0]
+        )
+
+        draw.text(
+            (
+                (size - text_width) // 2,
+                y
+            ),
+            text,
+            fill=color,
+            font=font
+        )
+
+
+    # =================================================
+    # BALLOON HELPER
+    # =================================================
+
+    def balloon(
+        x,
+        y,
+        color,
+        string_length=9
+    ):
+
+        # Balloon body
+        draw.ellipse(
+            (
+                x - 4,
+                y - 5,
+                x + 4,
+                y + 5
+            ),
+            fill=color
+        )
+
+        # Little knot
+        draw.polygon(
+            [
+                (x - 2, y + 5),
+                (x + 2, y + 5),
+                (x, y + 8),
+            ],
+            fill=color
+        )
+
+        # String
+        draw.line(
+            (
+                x,
+                y + 8,
+                x,
+                y + 8 + string_length
+            ),
+            fill=(180, 180, 180),
+            width=1
+        )
+
+
+    # =================================================
+    # BALLOONS
+    # =================================================
+
+    balloon(
+        6,
+        7,
+        (255, 105, 180),
+        8
     )
 
-    draw.text(
-        (
-            (size - text_width) // 2,
-            56
-        ),
-        current_date,
-        fill=(255, 105, 180),
-        font=font
+    balloon(
+        57,
+        8,
+        (120, 180, 255),
+        8
+    )
+
+    balloon(
+        7,
+        48,
+        (255, 80, 80),
+        6
+    )
+
+    balloon(
+        56,
+        49,
+        (200, 100, 255),
+        6
+    )
+
+
+    # =================================================
+    # BIRTHDAY MESSAGE
+    # =================================================
+
+    centered_text(
+        "HAPPY",
+        3,
+        (255, 220, 80)
+    )
+
+    centered_text(
+        "BIRTHDAY",
+        14,
+        (255, 105, 180)
+    )
+
+    centered_text(
+        "ALAINA!",
+        25,
+        (255, 255, 255)
+    )
+
+    centered_text(
+        "I LOVE",
+        38,
+        (255, 105, 180)
+    )
+
+    centered_text(
+        "YOU!",
+        49,
+        (255, 255, 255)
     )
 
     return frame
@@ -1590,7 +1748,12 @@ def draw_weather_icon(
     """
     Draw a simple weather icon suitable
     for a 64x64 RGB matrix.
+
+    All icons are shifted down by 5 pixels.
     """
+
+    y_offset = 8
+
 
     # =================================================
     # CLEAR
@@ -1600,7 +1763,7 @@ def draw_weather_icon(
 
         # Sun
         center_x = 32
-        center_y = 15
+        center_y = 15 + y_offset
         radius = 6
 
         draw.ellipse(
@@ -1668,23 +1831,43 @@ def draw_weather_icon(
 
         # Small sun
         draw.ellipse(
-            (20, 6, 31, 17),
+            (
+                20,
+                6 + y_offset,
+                31,
+                17 + y_offset
+            ),
             fill=(255, 210, 50)
         )
 
         # Cloud
         draw.ellipse(
-            (22, 12, 36, 24),
+            (
+                22,
+                12 + y_offset,
+                36,
+                24 + y_offset
+            ),
             fill=(210, 210, 220)
         )
 
         draw.ellipse(
-            (31, 9, 44, 24),
+            (
+                31,
+                9 + y_offset,
+                44,
+                24 + y_offset
+            ),
             fill=(210, 210, 220)
         )
 
         draw.rectangle(
-            (22, 17, 44, 24),
+            (
+                22,
+                17 + y_offset,
+                44,
+                24 + y_offset
+            ),
             fill=(210, 210, 220)
         )
 
@@ -1702,30 +1885,56 @@ def draw_weather_icon(
     ):
 
         draw.ellipse(
-            (17, 11, 34, 25),
+            (
+                17,
+                11 + y_offset,
+                34,
+                25 + y_offset
+            ),
             fill=(180, 180, 190)
         )
 
         draw.ellipse(
-            (29, 7, 46, 25),
+            (
+                29,
+                7 + y_offset,
+                46,
+                25 + y_offset
+            ),
             fill=(180, 180, 190)
         )
 
         draw.rectangle(
-            (17, 18, 46, 25),
+            (
+                17,
+                18 + y_offset,
+                46,
+                25 + y_offset
+            ),
             fill=(180, 180, 190)
         )
 
+        # Fog lines
         if code in (45, 48):
 
             draw.line(
-                (18, 29, 45, 29),
+                (
+                    18,
+                    29 + y_offset,
+                    45,
+                    29 + y_offset
+                ),
                 fill=(130, 130, 140),
                 width=1
             )
 
             draw.line(
-                (22, 33, 42, 33),
+                (
+                    22,
+                    33 + y_offset,
+                    42,
+                    33 + y_offset
+                ),
                 fill=(130, 130, 140),
                 width=1
             )
@@ -1744,17 +1953,32 @@ def draw_weather_icon(
 
         # Cloud
         draw.ellipse(
-            (17, 8, 34, 22),
+            (
+                17,
+                8 + y_offset,
+                34,
+                22 + y_offset
+            ),
             fill=(175, 175, 185)
         )
 
         draw.ellipse(
-            (29, 6, 46, 22),
+            (
+                29,
+                6 + y_offset,
+                46,
+                22 + y_offset
+            ),
             fill=(175, 175, 185)
         )
 
         draw.rectangle(
-            (17, 15, 46, 22),
+            (
+                17,
+                15 + y_offset,
+                46,
+                22 + y_offset
+            ),
             fill=(175, 175, 185)
         )
 
@@ -1769,9 +1993,9 @@ def draw_weather_icon(
             draw.line(
                 (
                     x,
-                    26,
+                    26 + y_offset,
                     x - 2,
-                    31
+                    31 + y_offset
                 ),
                 fill=(70, 160, 255),
                 width=2
@@ -1791,17 +2015,32 @@ def draw_weather_icon(
 
         # Cloud
         draw.ellipse(
-            (17, 8, 34, 22),
+            (
+                17,
+                8 + y_offset,
+                34,
+                22 + y_offset
+            ),
             fill=(190, 190, 200)
         )
 
         draw.ellipse(
-            (29, 6, 46, 22),
+            (
+                29,
+                6 + y_offset,
+                46,
+                22 + y_offset
+            ),
             fill=(190, 190, 200)
         )
 
         draw.rectangle(
-            (17, 15, 46, 22),
+            (
+                17,
+                15 + y_offset,
+                46,
+                22 + y_offset
+            ),
             fill=(190, 190, 200)
         )
 
@@ -1812,6 +2051,8 @@ def draw_weather_icon(
             (39, 27),
             (45, 32),
         ):
+
+            y += y_offset
 
             draw.ellipse(
                 (
@@ -1834,29 +2075,44 @@ def draw_weather_icon(
 
         # Cloud
         draw.ellipse(
-            (17, 8, 34, 22),
+            (
+                17,
+                8 + y_offset,
+                34,
+                22 + y_offset
+            ),
             fill=(150, 150, 165)
         )
 
         draw.ellipse(
-            (29, 6, 46, 22),
+            (
+                29,
+                6 + y_offset,
+                46,
+                22 + y_offset
+            ),
             fill=(150, 150, 165)
         )
 
         draw.rectangle(
-            (17, 15, 46, 22),
+            (
+                17,
+                15 + y_offset,
+                46,
+                22 + y_offset
+            ),
             fill=(150, 150, 165)
         )
 
         # Lightning bolt
         draw.polygon(
             [
-                (33, 23),
-                (28, 32),
-                (33, 31),
-                (29, 40),
-                (39, 28),
-                (34, 29),
+                (33, 23 + y_offset),
+                (28, 32 + y_offset),
+                (33, 31 + y_offset),
+                (29, 40 + y_offset),
+                (39, 28 + y_offset),
+                (34, 29 + y_offset),
             ],
             fill=(255, 220, 40)
         )
@@ -1865,11 +2121,16 @@ def draw_weather_icon(
 
 
     # =================================================
-    # UNKNOWN
+    # UNKNOWN WEATHER
     # =================================================
 
     draw.ellipse(
-        (18, 9, 45, 26),
+        (
+            18,
+            9 + y_offset,
+            45,
+            26 + y_offset
+        ),
         fill=(180, 180, 190)
     )
 
@@ -2089,6 +2350,7 @@ def run(args: argparse.Namespace) -> None:
     idle_screens = [
         "CLOCK",
         "WEATHER",
+        "BIRTHDAY",
     ]
 
     idle_screen_index = 0
@@ -2397,8 +2659,7 @@ def run(args: argparse.Namespace) -> None:
                 ):
                     display_state = IDLE
 
-                    # Always restart idle mode
-                    # from the clock.
+                    # Always restart idle mode from clock.
                     idle_screen_index = 0
 
                     current_idle_screen = (
@@ -2420,36 +2681,41 @@ def run(args: argparse.Namespace) -> None:
                     last_art_image = None
                     paused_image = None
 
-                    # =================================================
-                    # Rotate idle screens
-                    # =================================================
+            # =================================================
+            # Rotate idle screens
+            # =================================================
 
-                if display_state == IDLE:
+            if display_state == IDLE:
 
-                    idle_elapsed = (
-                            now
-                            - idle_screen_start_time
+                idle_elapsed = (
+                        now
+                        - idle_screen_start_time
+                )
+
+                if (
+                        idle_elapsed >= IDLE_SCREEN_DURATION
+                        and not fade_active
+                ):
+                    idle_screen_index = (
+                                                idle_screen_index + 1
+                                        ) % len(idle_screens)
+
+                    current_idle_screen = (
+                        idle_screens[
+                            idle_screen_index
+                        ]
                     )
 
-                    if (
-                            idle_elapsed >= IDLE_SCREEN_DURATION
-                            and not fade_active
-                    ):
-                        idle_screen_index = (
-                                                    idle_screen_index + 1
-                                            ) % len(idle_screens)
+                    print(
+                        f"Idle screen changed to: "
+                        f"{current_idle_screen}",
+                        flush=True
+                    )
 
-                        current_idle_screen = (
-                            idle_screens[
-                                idle_screen_index
-                            ]
-                        )
+                    idle_screen_start_time = (
+                            now + FADE_DURATION
+                    )
 
-                        # Start the next 10-second timer
-                        # after the fade finishes.
-                        idle_screen_start_time = (
-                                now + FADE_DURATION
-                        )
             # =================================================
             # Select image to display
             # =================================================
@@ -2608,6 +2874,16 @@ def run(args: argparse.Namespace) -> None:
                         )
 
                     image = weather_image
+
+                # =============================================
+                # BIRTHDAY
+                # =============================================
+
+                elif current_idle_screen == "BIRTHDAY":
+
+                    image = render_birthday(
+                        size
+                    )
 
             # =================================================
             # Start fade when display state changes
@@ -2887,10 +3163,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Avoid Pi onboard sound conflict at the cost of more possible flicker.",
     )
-    parser.add_argument("--poll-seconds", type=positive_float, default=.5)
+    parser.add_argument("--poll-seconds", type=positive_float, default=1)
     parser.add_argument("--fps", type=positive_float, default=20.0)
     parser.add_argument("--rpm", type=positive_float, default=10.0)
-    parser.add_argument("--fade-duration",type=positive_float,default=0.30,help="Total fade-out/fade-in transition time in seconds.")
+    parser.add_argument("--fade-duration",type=positive_float,default=0.6,help="Total fade-out/fade-in transition time in seconds.")
     parser.add_argument("--shatter-duration",type=positive_float,default=0.7,help="Length of the CD shatter animation in seconds.")
     parser.add_argument("--shatter-hold",type=positive_float,default=5.0,help="How long the shattered CD remains on screen in seconds.")
     parser.add_argument("--token-cache", type=Path, default=Path(".cache/spotify_token.json"))
@@ -2900,7 +3176,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--test-pattern", action="store_true", help="Show a bright moving color test pattern without using Spotify.")
     parser.add_argument("--once", action="store_true", help="Render one frame and exit.")
     parser.add_argument("--no-browser", action="store_true", help="Print the Spotify auth URL without trying to open a browser.")
-    parser.add_argument("--idle-screen-duration",type=positive_float,default=10.0,help="Seconds each idle screen stays visible.")
+    parser.add_argument("--idle-screen-duration",type=positive_float,default=15.0,help="Seconds each idle screen stays visible.")
     parser.add_argument("--weather-update-seconds",type=positive_float,default=900.0,help="Seconds between weather updates.")
     parser.add_argument("--weather-latitude",type=float,default=29.6516,help="Latitude used for weather.")
     parser.add_argument("--weather-longitude",type=float,default=-82.3248,help="Longitude used for weather.")
