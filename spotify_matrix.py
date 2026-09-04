@@ -526,26 +526,28 @@ def render_record(
         size - margin - 1
     )
 
-    white_outer = (
+    pink_outer = (
         outer[0] - 1,
         outer[1] - 1,
         outer[2] + 1,
         outer[3] + 1
     )
 
+    # Thin pink outer ring
+    draw.ellipse(
+        pink_outer,
+        outline=(255, 105, 180, 255),
+        width=2
+    )
+
     # White outer ring
     draw.ellipse(
-        white_outer,
+        outer,
         outline=(255, 255, 255, 255),
         width=1
     )
 
-    # Thin pink outer ring
-    draw.ellipse(
-        outer,
-        outline=(255, 105, 180, 255),
-        width=1
-    )
+
 
     # =================================================
     # Center circle
@@ -553,7 +555,7 @@ def render_record(
 
     center = size // 2
 
-    label_radius = max(5, size // 11)
+    label_radius = max(2, size // 15)
     hole_radius = max(2, size // 25)
 
     # Pink center
@@ -568,7 +570,7 @@ def render_record(
     )
 
     # White ring farther inward
-    white_radius = label_radius - 2
+    white_radius = label_radius
 
     draw.ellipse(
         (
@@ -590,6 +592,63 @@ def render_record(
             center + hole_radius,
         ),
         fill=(0, 0, 0, 255),
+    )
+
+    # =================================================
+    # Pink hearts in the four corners
+    # =================================================
+
+    # Top-right: one normal heart
+    draw_heart(
+        draw,
+        size - 6,
+        5,
+        size=3
+    )
+
+    # Bottom-left: one normal heart
+    draw_heart(
+        draw,
+        5,
+        size - 6,
+        size=3
+    )
+
+    # =================================================
+    # Top-left: two smaller hearts
+    # =================================================
+
+    draw_heart(
+        draw,
+        4,
+        4,
+        size=2
+    )
+
+    draw_heart(
+        draw,
+        9,
+        8,
+        size=2
+    )
+
+    # =================================================
+    # Bottom-right: two smaller hearts
+    # Opposite diagonal from top-left
+    # =================================================
+
+    draw_heart(
+        draw,
+        size - 10,
+        size - 5,
+        size=2
+    )
+
+    draw_heart(
+        draw,
+        size - 5,
+        size - 10,
+        size=2
     )
 
     return frame.convert("RGB")
@@ -1373,7 +1432,7 @@ def render_weather(
     draw.text(
         (
             (size - text_width) // 2,
-            38
+            41
         ),
         temperature_text,
         fill=(255, 255, 255),
@@ -1577,6 +1636,22 @@ def render_birthday(
 
     return frame
 
+def render_picture(
+    image_path: str,
+    size: int,
+) -> Image.Image:
+
+    image = Image.open(
+        image_path
+    ).convert("RGB")
+
+    image = ImageOps.fit(
+        image,
+        (size, size),
+        method=Image.Resampling.LANCZOS
+    )
+
+    return image
 
 def render_test_pattern(size: int, offset: int) -> Image.Image:
     frame = Image.new("RGB", (size, size), (0, 0, 0))
@@ -2348,9 +2423,12 @@ def run(args: argparse.Namespace) -> None:
     )
 
     idle_screens = [
+        "BIRTHDAY",
+        "IMAGE1",
+        "IMAGE2",
+        "IMAGE3",
         "CLOCK",
         "WEATHER",
-        "BIRTHDAY",
     ]
 
     idle_screen_index = 0
@@ -2381,6 +2459,25 @@ def run(args: argparse.Namespace) -> None:
     fade_from_image = None
     fade_to_image = None
     last_displayed_image = None
+
+    # =================================================
+    # Images render
+    # =================================================
+
+    image1 = render_picture(
+        "images/aidenalaina.png",
+        size
+    )
+
+    image2 = render_picture(
+        "images/freddy.png",
+        size
+    )
+
+    image3 = render_picture(
+        "images/aidenalaina2.png",
+        size
+    )
 
     # =================================================
     # Performance counters
@@ -2884,6 +2981,22 @@ def run(args: argparse.Namespace) -> None:
                     image = render_birthday(
                         size
                     )
+
+                # =============================================
+                # IMAGES
+                # =============================================
+
+                elif current_idle_screen == "IMAGE1":
+
+                    image = image1
+
+                elif current_idle_screen == "IMAGE2":
+
+                    image = image2
+
+                elif current_idle_screen == "IMAGE3":
+
+                    image = image3
 
             # =================================================
             # Start fade when display state changes
